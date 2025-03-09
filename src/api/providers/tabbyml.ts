@@ -132,6 +132,7 @@ export class TabbyHandler extends BaseProvider implements SingleCompletionHandle
 			throw error
 		}
 	}
+
 	// Initializes the handler with the provided endpoint and token
 	private async initialize() {
 		try {
@@ -139,14 +140,14 @@ export class TabbyHandler extends BaseProvider implements SingleCompletionHandle
 				throw new Error("Tabby endpoint is not configured")
 			}
 
-			// Create the OpenAI client using the endpoint and token
+			const normalizedEndpoint = this.endpoint.endsWith("/") ? this.endpoint.slice(0, -1) : this.endpoint
+
 			this.client = new OpenAI({
-				baseURL: `${this.endpoint}/v1`,
-				apiKey: this.token || "dummy", // Use dummy if no token provided
+				baseURL: `${normalizedEndpoint}/v1`,
+				apiKey: this.token || "",
 				defaultHeaders: { "Content-Type": "application/json" },
 			})
 		} catch (error) {
-			const errorMessage = `Tabby initialization failed: ${error}`
 			throw error
 		}
 	}
@@ -174,13 +175,12 @@ export class TabbyHandler extends BaseProvider implements SingleCompletionHandle
 			const resultText = chunks.join("")
 			return resultText
 		} catch (error) {
-			const errorMessage = `Error in completePrompt: ${error instanceof Error ? error.message : "Unknown error"}`
 			throw error
 		}
 	}
 }
 
-export async function initTabbyConfig(): Promise<TabbyConfig> {
+export async function fetchLatestTabbyConfig(): Promise<TabbyConfig> {
 	try {
 		const config = vscode.workspace.getConfiguration("tabby")
 		const endpoint = config.get("endpoint", "")
@@ -217,16 +217,38 @@ export async function getTabbyModels(
 	tabbyBaseUrl: string = "http://localhost:8080",
 	tabbyApiKey?: string,
 ): Promise<string[]> {
-	if (!tabbyBaseUrl || tabbyApiKey === undefined) {
+	if (!tabbyBaseUrl) {
 		return []
 	}
-	const response = await (
-		await fetch(`${tabbyBaseUrl}/v1beta/models`, {
+
+	const normalizedBaseUrl = tabbyBaseUrl.endsWith("/") ? tabbyBaseUrl.slice(0, -1) : tabbyBaseUrl
+
+	const url = `${normalizedBaseUrl}/v1beta/models`
+
+	try {
+		const options = {
+			method: "GET",
 			headers: {
+				Accept: "application/json",
 				Authorization: `Bearer ${tabbyApiKey}`,
+				"Content-Type": "application/json",
 			},
-		})
-	).json()
-	const models = response.chat
-	return models || []
+		}
+
+		const response = await fetch(url, options)
+
+		if (!response.ok) {
+			return []
+		}
+
+		const data = await response.json()
+
+		if (data && data.chat && Array.isArray(data.chat)) {
+			return data.chat
+		} else {
+			return []
+		}
+	} catch (error) {
+		return []
+	}
 }

@@ -53,7 +53,7 @@ import { Cline, ClineOptions } from "../Cline"
 import { openMention } from "../mentions"
 import { getNonce } from "./getNonce"
 import { getUri } from "./getUri"
-import { getTabbyModels, initTabbyConfig as fetchLatestTabbyConfig } from "../../api/providers/tabbyml"
+import { getTabbyModels, fetchLatestTabbyConfig } from "../../api/providers/tabbyml"
 import { telemetryService } from "../../services/telemetry/TelemetryService"
 import { TelemetrySetting } from "../../shared/TelemetrySetting"
 
