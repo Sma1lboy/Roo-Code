@@ -6,6 +6,8 @@ import { ApiStreamChunk } from "../transform/stream"
 import OpenAI from "openai"
 import Anthropic from "@anthropic-ai/sdk/index.mjs"
 import { convertToOpenAiMessages } from "../transform/openai-format"
+import { OpenAiHandler, OpenAiHandlerOptions } from "./openai"
+
 export interface TabbyConfig {
 	endpoint: string
 	apiKey?: any
@@ -13,170 +15,20 @@ export interface TabbyConfig {
 
 const TABBY_EXTENSION_ID = "TabbyML.vscode-tabby"
 
-export class TabbyHandler extends BaseProvider implements SingleCompletionHandler {
-	protected options: ApiHandlerOptions
-	private endpoint: string
-	private token: string
-	private client: OpenAI | null = null
-	private initialized: boolean = false
-	private initPromise: Promise<void> | null = null
+export class TabbyHandler extends OpenAiHandler {
+	constructor(options: OpenAiHandlerOptions) {
+		const normalizedBaseUrl = options.tabbyBaseUrl?.endsWith("/")
+			? options.tabbyBaseUrl.slice(0, -1)
+			: options.tabbyBaseUrl
 
-	constructor(options: ApiHandlerOptions) {
-		super()
-		this.options = options
-		this.endpoint = options.tabbyBaseUrl || ""
-		this.token = options.tabbyApiKey || ""
-	}
-
-	private async ensureInitialized() {
-		if (this.initialized) return
-
-		if (!this.initPromise) {
-			this.initPromise = this.initialize()
-		}
-
-		try {
-			await this.initPromise
-			this.initialized = true
-		} catch (error) {
-			this.initPromise = null
-			throw error
-		}
-	}
-
-	// Returns model configuration used for completions.
-	getModel(): { id: string; info: ModelInfo } {
-		return {
-			id: this.options.tabbyModelId || "",
-			info: {
-				maxTokens: -1,
-				contextWindow: 128_000,
-				supportsImages: false,
-				supportsPromptCache: false,
-				inputPrice: 0,
-				outputPrice: 0,
-			},
-		}
-	}
-
-	// Creates a message stream for completion.
-	async *createMessage(
-		systemPrompt: string,
-		messages: Anthropic.Messages.MessageParam[],
-	): AsyncGenerator<ApiStreamChunk> {
-		try {
-			await this.ensureInitialized()
-
-			if (!this.client) {
-				throw new Error("OpenAI client is not initialized")
-			}
-
-			const systemMessage: OpenAI.Chat.ChatCompletionSystemMessageParam = {
-				role: "system",
-				content: systemPrompt,
-			}
-
-			const convertedMessages = convertToOpenAiMessages(messages)
-			const openAiMessages = [systemMessage, ...convertedMessages]
-
-			try {
-				const response = await this.client.chat.completions.create({
-					model: this.options.tabbyModelId || "",
-					messages: openAiMessages,
-					max_tokens: 1024,
-					temperature: 0.6,
-					stream: true,
-				})
-
-				let fullText = ""
-				for await (const chunk of response) {
-					const content = chunk.choices[0]?.delta?.content || ""
-					if (content) {
-						fullText += content
-						yield { type: "text", text: content }
-					}
-				}
-
-				const inputText = openAiMessages.map((m) => m.content).join(" ")
-				const estimatedInputTokens = Math.ceil(inputText.length / 4)
-				const estimatedOutputTokens = Math.ceil(fullText.length / 4)
-
-				yield {
-					type: "usage",
-					inputTokens: estimatedInputTokens,
-					outputTokens: estimatedOutputTokens,
-				}
-			} catch (error) {
-				const result = await this.completePrompt(
-					openAiMessages.map((m) => `${m.role}: ${m.content}`).join("\n"),
-				)
-
-				const chunks = result.split(/(?<=\. |\n)/)
-				for (const chunk of chunks) {
-					if (chunk.trim()) {
-						yield { type: "text", text: chunk }
-					}
-				}
-
-				const inputText = openAiMessages.map((m) => m.content).join(" ")
-				const estimatedInputTokens = Math.ceil(inputText.length / 4)
-				const estimatedOutputTokens = Math.ceil(result.length / 4)
-
-				yield {
-					type: "usage",
-					inputTokens: estimatedInputTokens,
-					outputTokens: estimatedOutputTokens,
-				}
-			}
-		} catch (error) {
-			throw error
-		}
-	}
-
-	// Initializes the handler with the provided endpoint and token
-	private async initialize() {
-		try {
-			if (!this.endpoint) {
-				throw new Error("Tabby endpoint is not configured")
-			}
-
-			const normalizedEndpoint = this.endpoint.endsWith("/") ? this.endpoint.slice(0, -1) : this.endpoint
-
-			this.client = new OpenAI({
-				baseURL: `${normalizedEndpoint}/v1`,
-				apiKey: this.token || "",
-				defaultHeaders: { "Content-Type": "application/json" },
-			})
-		} catch (error) {
-			throw error
-		}
-	}
-
-	// Uses the stored OpenAI client configured with the Tabby endpoint to complete the prompt.
-	async completePrompt(prompt: string): Promise<string> {
-		try {
-			await this.ensureInitialized()
-
-			if (!this.client) {
-				throw new Error("OpenAI client is not initialized")
-			}
-
-			const response = await this.client.chat.completions.create({
-				model: this.options.tabbyModelId || "",
-				messages: [{ role: "user", content: prompt }],
-				max_tokens: 1024,
-				temperature: 1,
-				stream: true,
-			})
-			const chunks: string[] = []
-			for await (const chunk of response) {
-				chunks.push(chunk.choices[0]?.delta.content || "")
-			}
-			const resultText = chunks.join("")
-			return resultText
-		} catch (error) {
-			throw error
-		}
+		super({
+			...options,
+			openAiApiKey: options.tabbyApiKey ?? "",
+			openAiModelId: options.tabbyModelId ?? "",
+			openAiBaseUrl: `${normalizedBaseUrl}/v1`,
+			openAiStreamingEnabled: true,
+			includeMaxTokens: false,
+		})
 	}
 }
 
