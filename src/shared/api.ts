@@ -16,6 +16,7 @@ export type ApiProvider =
 	| "mistral"
 	| "unbound"
 	| "requesty"
+	| "tabby"
 	| "human-relay"
 
 export interface ApiHandlerOptions {
@@ -63,6 +64,9 @@ export interface ApiHandlerOptions {
 	openAiStreamingEnabled?: boolean
 	deepSeekBaseUrl?: string
 	deepSeekApiKey?: string
+	tabbyModelId?: string
+	tabbyBaseUrl?: string
+	tabbyApiKey?: string
 	includeMaxTokens?: boolean
 	unboundApiKey?: string
 	unboundModelId?: string
@@ -126,6 +130,8 @@ export const API_CONFIG_KEYS: GlobalStateKey[] = [
 	"modelTemperature",
 	"modelMaxTokens",
 	"modelMaxThinkingTokens",
+	"tabbyBaseUrl",
+	"tabbyModelId",
 ]
 
 // Models
