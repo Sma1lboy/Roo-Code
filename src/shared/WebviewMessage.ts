@@ -95,6 +95,7 @@ export interface WebviewMessage {
 		| "deleteMcpServer"
 		| "maxOpenTabsContext"
 		| "browserToolEnabled"
+		| "requestTabbyModels"
 	text?: string
 	disabled?: boolean
 	askResponse?: ClineAskResponse

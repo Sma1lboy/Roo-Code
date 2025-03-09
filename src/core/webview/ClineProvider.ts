@@ -48,6 +48,7 @@ import { Cline } from "../Cline"
 import { openMention } from "../mentions"
 import { getNonce } from "./getNonce"
 import { getUri } from "./getUri"
+import { getTabbyModels, initTabbyConfig as fetchLatestTabbyConfig } from "../../api/providers/tabbyml"
 
 /**
  * https://github.com/microsoft/vscode-webview-ui-toolkit-samples/blob/main/default/weather-webview/src/providers/WeatherViewProvider.ts
@@ -868,6 +869,19 @@ export class ClineProvider implements vscode.WebviewViewProvider {
 						// TODO: Cache like we do for OpenRouter, etc?
 						this.postMessageToWebview({ type: "lmStudioModels", lmStudioModels })
 						break
+					case "requestTabbyModels":
+						const tabbyConfig = await fetchLatestTabbyConfig()
+						const tabbyModels = await getTabbyModels(tabbyConfig.endpoint, tabbyConfig.apiKey)
+						this.postMessageToWebview({
+							type: "tabbyModels",
+							tabbyModels: tabbyModels,
+							tabbyConfig: {
+								endpoint: tabbyConfig.endpoint,
+								apiKey: tabbyConfig.apiKey,
+							},
+						})
+
+						break
 					case "requestVsCodeLmModels":
 						const vsCodeLmModels = await getVsCodeLmModels()
 						// TODO: Cache like we do for OpenRouter, etc?
@@ -1676,6 +1690,9 @@ export class ClineProvider implements vscode.WebviewViewProvider {
 			modelTemperature,
 			modelMaxTokens,
 			modelMaxThinkingTokens,
+			tabbyApiKey,
+			tabbyBaseUrl,
+			tabbyModelId,
 		} = apiConfiguration
 		await Promise.all([
 			this.updateGlobalState("apiProvider", apiProvider),
@@ -1688,6 +1705,9 @@ export class ClineProvider implements vscode.WebviewViewProvider {
 			this.storeSecret("awsAccessKey", awsAccessKey),
 			this.storeSecret("awsSecretKey", awsSecretKey),
 			this.storeSecret("awsSessionToken", awsSessionToken),
+			this.storeSecret("tabbyApiKey", tabbyApiKey),
+			this.updateGlobalState("tabbyBaseUrl", tabbyBaseUrl),
+			this.updateGlobalState("tabbyModelId", tabbyModelId),
 			this.updateGlobalState("awsRegion", awsRegion),
 			this.updateGlobalState("awsUseCrossRegionInference", awsUseCrossRegionInference),
 			this.updateGlobalState("awsProfile", awsProfile),
@@ -2221,6 +2241,9 @@ export class ClineProvider implements vscode.WebviewViewProvider {
 			modelMaxThinkingTokens,
 			maxOpenTabsContext,
 			browserToolEnabled,
+			tabbyApiKey,
+			tabbyBaseUrl,
+			tabbyModelId,
 		] = await Promise.all([
 			this.getGlobalState("apiProvider") as Promise<ApiProvider | undefined>,
 			this.getGlobalState("apiModelId") as Promise<string | undefined>,
@@ -2306,6 +2329,9 @@ export class ClineProvider implements vscode.WebviewViewProvider {
 			this.getGlobalState("anthropicThinking") as Promise<number | undefined>,
 			this.getGlobalState("maxOpenTabsContext") as Promise<number | undefined>,
 			this.getGlobalState("browserToolEnabled") as Promise<boolean | undefined>,
+			this.getSecret("tabbyApiKey") as Promise<string | undefined>,
+			this.getGlobalState("tabbyBaseUrl") as Promise<string | undefined>,
+			this.getGlobalState("tabbyModelId") as Promise<string | undefined>,
 		])
 
 		let apiProvider: ApiProvider
@@ -2371,6 +2397,9 @@ export class ClineProvider implements vscode.WebviewViewProvider {
 				modelTemperature,
 				modelMaxTokens,
 				modelMaxThinkingTokens,
+				tabbyApiKey,
+				tabbyBaseUrl,
+				tabbyModelId,
 			},
 			lastShownAnnouncementId,
 			customInstructions,
@@ -2510,6 +2539,7 @@ export class ClineProvider implements vscode.WebviewViewProvider {
 			"mistralApiKey",
 			"unboundApiKey",
 			"requestyApiKey",
+			"tabbyApiKey",
 		]
 		for (const key of secretKeys) {
 			await this.storeSecret(key, undefined)

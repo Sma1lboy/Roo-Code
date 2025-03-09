@@ -16,6 +16,7 @@ export type ApiProvider =
 	| "mistral"
 	| "unbound"
 	| "requesty"
+	| "tabby"
 
 export interface ApiHandlerOptions {
 	apiModelId?: string
@@ -59,6 +60,9 @@ export interface ApiHandlerOptions {
 	setAzureApiVersion?: boolean
 	deepSeekBaseUrl?: string
 	deepSeekApiKey?: string
+	tabbyModelId?: string
+	tabbyBaseUrl?: string
+	tabbyApiKey?: string
 	includeMaxTokens?: boolean
 	unboundApiKey?: string
 	unboundModelId?: string

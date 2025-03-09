@@ -74,6 +74,7 @@ const ApiOptions = ({
 	const [ollamaModels, setOllamaModels] = useState<string[]>([])
 	const [lmStudioModels, setLmStudioModels] = useState<string[]>([])
 	const [vsCodeLmModels, setVsCodeLmModels] = useState<vscodemodels.LanguageModelChatSelector[]>([])
+	const [tabbyModels, setTabbyModels] = useState<string[]>([])
 
 	const [openRouterModels, setOpenRouterModels] = useState<Record<string, ModelInfo>>({
 		[openRouterDefaultModelId]: openRouterDefaultModelInfo,
@@ -145,6 +146,8 @@ const ApiOptions = ({
 				vscode.postMessage({ type: "requestLmStudioModels", text: apiConfiguration?.lmStudioBaseUrl })
 			} else if (selectedProvider === "vscode-lm") {
 				vscode.postMessage({ type: "requestVsCodeLmModels" })
+			} else if (selectedProvider === "tabby") {
+				vscode.postMessage({ type: "requestTabbyModels", apiConfiguration })
 			}
 		},
 		250,
@@ -166,55 +169,71 @@ const ApiOptions = ({
 		setErrorMessage(apiValidationResult)
 	}, [apiConfiguration, glamaModels, openRouterModels, setErrorMessage, unboundModels, requestyModels])
 
-	const onMessage = useCallback((event: MessageEvent) => {
-		const message: ExtensionMessage = event.data
+	const onMessage = useCallback(
+		(event: MessageEvent) => {
+			const message: ExtensionMessage = event.data
 
-		switch (message.type) {
-			case "openRouterModels": {
-				const updatedModels = message.openRouterModels ?? {}
-				setOpenRouterModels({ [openRouterDefaultModelId]: openRouterDefaultModelInfo, ...updatedModels })
-				break
-			}
-			case "glamaModels": {
-				const updatedModels = message.glamaModels ?? {}
-				setGlamaModels({ [glamaDefaultModelId]: glamaDefaultModelInfo, ...updatedModels })
-				break
-			}
-			case "unboundModels": {
-				const updatedModels = message.unboundModels ?? {}
-				setUnboundModels({ [unboundDefaultModelId]: unboundDefaultModelInfo, ...updatedModels })
-				break
-			}
-			case "requestyModels": {
-				const updatedModels = message.requestyModels ?? {}
-				setRequestyModels({ [requestyDefaultModelId]: requestyDefaultModelInfo, ...updatedModels })
-				break
-			}
-			case "openAiModels": {
-				const updatedModels = message.openAiModels ?? []
-				setOpenAiModels(Object.fromEntries(updatedModels.map((item) => [item, openAiModelInfoSaneDefaults])))
-				break
-			}
-			case "ollamaModels":
-				{
-					const newModels = message.ollamaModels ?? []
-					setOllamaModels(newModels)
+			switch (message.type) {
+				case "openRouterModels": {
+					const updatedModels = message.openRouterModels ?? {}
+					setOpenRouterModels({ [openRouterDefaultModelId]: openRouterDefaultModelInfo, ...updatedModels })
+					break
 				}
-				break
-			case "lmStudioModels":
-				{
-					const newModels = message.lmStudioModels ?? []
-					setLmStudioModels(newModels)
+				case "glamaModels": {
+					const updatedModels = message.glamaModels ?? {}
+					setGlamaModels({ [glamaDefaultModelId]: glamaDefaultModelInfo, ...updatedModels })
+					break
 				}
-				break
-			case "vsCodeLmModels":
-				{
-					const newModels = message.vsCodeLmModels ?? []
-					setVsCodeLmModels(newModels)
+				case "unboundModels": {
+					const updatedModels = message.unboundModels ?? {}
+					setUnboundModels({ [unboundDefaultModelId]: unboundDefaultModelInfo, ...updatedModels })
+					break
 				}
-				break
-		}
-	}, [])
+				case "requestyModels": {
+					const updatedModels = message.requestyModels ?? {}
+					setRequestyModels({ [requestyDefaultModelId]: requestyDefaultModelInfo, ...updatedModels })
+					break
+				}
+				case "openAiModels": {
+					const updatedModels = message.openAiModels ?? []
+					setOpenAiModels(
+						Object.fromEntries(updatedModels.map((item) => [item, openAiModelInfoSaneDefaults])),
+					)
+					break
+				}
+				case "ollamaModels":
+					{
+						const newModels = message.ollamaModels ?? []
+						setOllamaModels(newModels)
+					}
+					break
+				case "lmStudioModels":
+					{
+						const newModels = message.lmStudioModels ?? []
+						setLmStudioModels(newModels)
+					}
+					break
+				case "vsCodeLmModels":
+					{
+						const newModels = message.vsCodeLmModels ?? []
+						setVsCodeLmModels(newModels)
+					}
+					break
+				case "tabbyModels":
+					{
+						const config = message.tabbyConfig ?? { apiKey: "", endpoint: "" }
+						console.log("token received", config)
+						setApiConfigurationField("tabbyApiKey", config.apiKey)
+						setApiConfigurationField("tabbyBaseUrl", config.endpoint)
+
+						const newModels = message.tabbyModels ?? []
+						setTabbyModels(newModels)
+					}
+					break
+			}
+		},
+		[setApiConfigurationField],
+	)
 
 	useEvent("message", onMessage)
 
@@ -254,6 +273,7 @@ const ApiOptions = ({
 						{ value: "bedrock", label: "AWS Bedrock" },
 						{ value: "glama", label: "Glama" },
 						{ value: "vscode-lm", label: "VS Code LM API" },
+						{ value: "tabby", label: "Tabby" },
 						{ value: "mistral", label: "Mistral" },
 						{ value: "lmstudio", label: "LM Studio" },
 						{ value: "ollama", label: "Ollama" },
@@ -1071,6 +1091,72 @@ const ApiOptions = ({
 					{/* end Model Info Configuration */}
 				</div>
 			)}
+			{selectedProvider === "tabby" && (
+				<div>
+					<label htmlFor="vscode-lm-model">
+						<span className="font-medium">Language Model</span>
+					</label>
+					{tabbyModels.length > 0 ? (
+						<Dropdown
+							id="tabbyml-model"
+							value={apiConfiguration?.tabbyModelId}
+							onChange={handleInputChange("tabbyModelId", (e) => {
+								const valueStr = (e as DropdownOption)?.value
+								return valueStr ? valueStr : ""
+							})}
+							style={{ width: "100%" }}
+							options={[
+								{ value: "", label: "Select a model..." },
+								...tabbyModels.map((model) => ({
+									value: model,
+									label: model,
+								})),
+							]}
+						/>
+					) : (
+						<div
+							style={{
+								padding: "10px",
+								background: "var(--vscode-editorWarning-background)",
+								color: "var(--vscode-editorWarning-foreground)",
+								border: "1px solid var(--vscode-editorWarning-border)",
+								borderRadius: "4px",
+								marginBottom: "10px",
+								display: "flex",
+								alignItems: "center",
+								fontSize: "13px",
+							}}>
+							<i className="codicon codicon-warning" style={{ fontSize: "14px", marginRight: "8px" }} />
+							Tabby models waiting to load...
+						</div>
+					)}
+
+					<p
+						style={{
+							fontSize: "12px",
+							marginTop: "5px",
+							color: "var(--vscode-descriptionForeground)",
+						}}>
+						<span
+							style={{
+								display: "block",
+								color: "var(--vscode-errorForeground)",
+								marginBottom: "8px",
+								background: "var(--vscode-errorBackground)",
+								padding: "8px",
+								borderRadius: "4px",
+								border: "1px solid var(--vscode-errorBorder)",
+							}}>
+							Note: This feature is still experimental. Results may vary depending on the model being
+							used.
+						</span>
+						Connect to Tabby server through the Tabby VS Code extension.{" "}
+						<VSCodeLink href="https://tabby.tabbyml.com" style={{ display: "inline", fontSize: "inherit" }}>
+							Learn more about Tabby
+						</VSCodeLink>
+					</p>
+				</div>
+			)}
 
 			{selectedProvider === "lmstudio" && (
 				<div>
@@ -1503,6 +1589,12 @@ export function normalizeApiConfiguration(apiConfiguration?: ApiConfiguration) {
 					...openAiModelInfoSaneDefaults,
 					supportsImages: false, // VSCode LM API currently doesn't support images.
 				},
+			}
+		case "tabby":
+			return {
+				selectedProvider: provider,
+				selectedModelId: apiConfiguration?.tabbyModelId || "",
+				selectedModelInfo: openAiModelInfoSaneDefaults,
 			}
 		default:
 			return getProviderData(anthropicModels, anthropicDefaultModelId)

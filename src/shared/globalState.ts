@@ -12,6 +12,7 @@ export type SecretKey =
 	| "mistralApiKey"
 	| "unboundApiKey"
 	| "requestyApiKey"
+	| "tabbyApiKey"
 
 export type GlobalStateKey =
 	| "apiProvider"
@@ -67,6 +68,8 @@ export type GlobalStateKey =
 	| "currentApiConfigName"
 	| "listApiConfigMeta"
 	| "vsCodeLmModelSelector"
+	| "tabbyModelId"
+	| "tabbyBaseUrl"
 	| "mode"
 	| "modeApiConfigs"
 	| "customModePrompts"

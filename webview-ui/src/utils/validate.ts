@@ -76,6 +76,11 @@ export function validateApiConfiguration(apiConfiguration?: ApiConfiguration): s
 				return "You must provide a valid model selector."
 			}
 			break
+		case "tabby":
+			if (!apiConfiguration.tabbyModelId) {
+				return "You must select a tabby model."
+			}
+			break
 	}
 
 	return undefined
