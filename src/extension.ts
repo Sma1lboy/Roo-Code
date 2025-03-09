@@ -1,12 +1,24 @@
 import * as vscode from "vscode"
+import * as dotenvx from "@dotenvx/dotenvx"
+
+// Load environment variables from .env file
+try {
+	// Specify path to .env file in the project root directory
+	const envPath = __dirname + "/../.env"
+	dotenvx.config({ path: envPath })
+} catch (e) {
+	// Silently handle environment loading errors
+	console.warn("Failed to load environment variables:", e)
+}
 
 import { ClineProvider } from "./core/webview/ClineProvider"
 import { createClineAPI } from "./exports"
 import "./utils/path" // Necessary to have access to String.prototype.toPosix.
 import { CodeActionProvider } from "./core/CodeActionProvider"
 import { DIFF_VIEW_URI_SCHEME } from "./integrations/editor/DiffViewProvider"
-import { handleUri, registerCommands, registerCodeActions, registerTerminalActions } from "./activate"
+import { handleUri, registerCommands, registerCodeActions } from "./activate"
 import { McpServerManager } from "./services/mcp/McpServerManager"
+import { telemetryService } from "./services/telemetry/TelemetryService"
 
 /**
  * Built using https://github.com/microsoft/vscode-webview-ui-toolkit
@@ -19,6 +31,18 @@ import { McpServerManager } from "./services/mcp/McpServerManager"
 let outputChannel: vscode.OutputChannel
 let extensionContext: vscode.ExtensionContext
 
+// Callback mapping of human relay response
+const humanRelayCallbacks = new Map<string, (response: string | undefined) => void>()
+
+/**
+ * Register a callback function for human relay response
+ * @param requestId
+ * @param callback
+ */
+export function registerHumanRelayCallback(requestId: string, callback: (response: string | undefined) => void): void {
+	humanRelayCallbacks.set(requestId, callback)
+}
+
 // This method is called when your extension is activated.
 // Your extension is activated the very first time the command is executed.
 export function activate(context: vscode.ExtensionContext) {
@@ -27,6 +51,9 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(outputChannel)
 	outputChannel.appendLine("Roo-Code extension activated")
 
+	// Initialize telemetry service after environment variables are loaded
+	telemetryService.initialize()
+
 	// Get default commands from configuration.
 	const defaultCommands = vscode.workspace.getConfiguration("roo-cline").get<string[]>("allowedCommands") || []
 
@@ -34,8 +61,8 @@ export function activate(context: vscode.ExtensionContext) {
 	if (!context.globalState.get("allowedCommands")) {
 		context.globalState.update("allowedCommands", defaultCommands)
 	}
-
 	const sidebarProvider = new ClineProvider(context, outputChannel)
+	telemetryService.setProvider(sidebarProvider)
 
 	context.subscriptions.push(
 		vscode.window.registerWebviewViewProvider(ClineProvider.sideBarId, sidebarProvider, {
@@ -44,6 +71,40 @@ export function activate(context: vscode.ExtensionContext) {
 	)
 
 	registerCommands({ context, outputChannel, provider: sidebarProvider })
+
+	// Register human relay callback registration command
+	context.subscriptions.push(
+		vscode.commands.registerCommand(
+			"roo-cline.registerHumanRelayCallback",
+			(requestId: string, callback: (response: string | undefined) => void) => {
+				registerHumanRelayCallback(requestId, callback)
+			},
+		),
+	)
+
+	// Register human relay response processing command
+	context.subscriptions.push(
+		vscode.commands.registerCommand(
+			"roo-cline.handleHumanRelayResponse",
+			(response: { requestId: string; text?: string; cancelled?: boolean }) => {
+				const callback = humanRelayCallbacks.get(response.requestId)
+				if (callback) {
+					if (response.cancelled) {
+						callback(undefined)
+					} else {
+						callback(response.text)
+					}
+					humanRelayCallbacks.delete(response.requestId)
+				}
+			},
+		),
+	)
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand("roo-cline.unregisterHumanRelayCallback", (requestId: string) => {
+			humanRelayCallbacks.delete(requestId)
+		}),
+	)
 
 	/**
 	 * We use the text document content provider API to show the left side for diff
@@ -81,14 +142,14 @@ export function activate(context: vscode.ExtensionContext) {
 	)
 
 	registerCodeActions(context)
-	registerTerminalActions(context)
 
 	return createClineAPI(outputChannel, sidebarProvider)
 }
 
-// This method is called when your extension is deactivated
+// This method is called when your extension is deactivated.
 export async function deactivate() {
 	outputChannel.appendLine("Roo-Code extension deactivated")
 	// Clean up MCP server manager
 	await McpServerManager.cleanup(extensionContext)
+	telemetryService.shutdown()
 }

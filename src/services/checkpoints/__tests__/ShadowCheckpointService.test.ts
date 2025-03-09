@@ -7,65 +7,72 @@ import { EventEmitter } from "events"
 
 import { simpleGit, SimpleGit } from "simple-git"
 
+import { fileExistsAtPath } from "../../../utils/fs"
+
 import { ShadowCheckpointService } from "../ShadowCheckpointService"
+import { RepoPerTaskCheckpointService } from "../RepoPerTaskCheckpointService"
+import { RepoPerWorkspaceCheckpointService } from "../RepoPerWorkspaceCheckpointService"
 
 jest.mock("globby", () => ({
 	globby: jest.fn().mockResolvedValue([]),
 }))
 
-const tmpDir = path.join(os.tmpdir(), "test-ShadowCheckpointService")
+const tmpDir = path.join(os.tmpdir(), "CheckpointService")
 
-describe("ShadowCheckpointService", () => {
+const initWorkspaceRepo = async ({
+	workspaceDir,
+	userName = "Roo Code",
+	userEmail = "support@roocode.com",
+	testFileName = "test.txt",
+	textFileContent = "Hello, world!",
+}: {
+	workspaceDir: string
+	userName?: string
+	userEmail?: string
+	testFileName?: string
+	textFileContent?: string
+}) => {
+	// Create a temporary directory for testing.
+	await fs.mkdir(workspaceDir, { recursive: true })
+
+	// Initialize git repo.
+	const git = simpleGit(workspaceDir)
+	await git.init()
+	await git.addConfig("user.name", userName)
+	await git.addConfig("user.email", userEmail)
+
+	// Create test file.
+	const testFile = path.join(workspaceDir, testFileName)
+	await fs.writeFile(testFile, textFileContent)
+
+	// Create initial commit.
+	await git.add(".")
+	await git.commit("Initial commit")!
+
+	return { git, testFile }
+}
+
+describe.each([
+	[RepoPerTaskCheckpointService, "RepoPerTaskCheckpointService"],
+	[RepoPerWorkspaceCheckpointService, "RepoPerWorkspaceCheckpointService"],
+])("CheckpointService", (klass, prefix) => {
 	const taskId = "test-task"
 
 	let workspaceGit: SimpleGit
 	let testFile: string
-	let service: ShadowCheckpointService
-
-	const initRepo = async ({
-		workspaceDir,
-		userName = "Roo Code",
-		userEmail = "support@roocode.com",
-		testFileName = "test.txt",
-		textFileContent = "Hello, world!",
-	}: {
-		workspaceDir: string
-		userName?: string
-		userEmail?: string
-		testFileName?: string
-		textFileContent?: string
-	}) => {
-		// Create a temporary directory for testing.
-		await fs.mkdir(workspaceDir, { recursive: true })
-
-		// Initialize git repo.
-		const git = simpleGit(workspaceDir)
-		await git.init()
-		await git.addConfig("user.name", userName)
-		await git.addConfig("user.email", userEmail)
-
-		// Create test file.
-		const testFile = path.join(workspaceDir, testFileName)
-		await fs.writeFile(testFile, textFileContent)
-
-		// Create initial commit.
-		await git.add(".")
-		await git.commit("Initial commit")!
-
-		return { git, testFile }
-	}
+	let service: RepoPerTaskCheckpointService | RepoPerWorkspaceCheckpointService
 
 	beforeEach(async () => {
 		jest.mocked(require("globby").globby).mockClear().mockResolvedValue([])
 
-		const shadowDir = path.join(tmpDir, `shadow-${Date.now()}`)
+		const shadowDir = path.join(tmpDir, `${prefix}-${Date.now()}`)
 		const workspaceDir = path.join(tmpDir, `workspace-${Date.now()}`)
-		const repo = await initRepo({ workspaceDir })
+		const repo = await initWorkspaceRepo({ workspaceDir })
 
-		testFile = repo.testFile
 		workspaceGit = repo.git
+		testFile = repo.testFile
 
-		service = await ShadowCheckpointService.create({ taskId, shadowDir, workspaceDir, log: () => {} })
+		service = await klass.create({ taskId, shadowDir, workspaceDir, log: () => {} })
 		await service.initShadowGit()
 	})
 
@@ -77,14 +84,14 @@ describe("ShadowCheckpointService", () => {
 		await fs.rm(tmpDir, { recursive: true, force: true })
 	})
 
-	describe("getDiff", () => {
+	describe(`${klass.name}#getDiff`, () => {
 		it("returns the correct diff between commits", async () => {
 			await fs.writeFile(testFile, "Ahoy, world!")
-			const commit1 = await service.saveCheckpoint("First checkpoint")
+			const commit1 = await service.saveCheckpoint("Ahoy, world!")
 			expect(commit1?.commit).toBeTruthy()
 
 			await fs.writeFile(testFile, "Goodbye, world!")
-			const commit2 = await service.saveCheckpoint("Second checkpoint")
+			const commit2 = await service.saveCheckpoint("Goodbye, world!")
 			expect(commit2?.commit).toBeTruthy()
 
 			const diff1 = await service.getDiff({ to: commit1!.commit })
@@ -94,7 +101,7 @@ describe("ShadowCheckpointService", () => {
 			expect(diff1[0].content.before).toBe("Hello, world!")
 			expect(diff1[0].content.after).toBe("Ahoy, world!")
 
-			const diff2 = await service.getDiff({ to: commit2!.commit })
+			const diff2 = await service.getDiff({ from: service.baseHash, to: commit2!.commit })
 			expect(diff2).toHaveLength(1)
 			expect(diff2[0].paths.relative).toBe("test.txt")
 			expect(diff2[0].paths.absolute).toBe(testFile)
@@ -140,7 +147,7 @@ describe("ShadowCheckpointService", () => {
 		})
 	})
 
-	describe("saveCheckpoint", () => {
+	describe(`${klass.name}#saveCheckpoint`, () => {
 		it("creates a checkpoint if there are pending changes", async () => {
 			await fs.writeFile(testFile, "Ahoy, world!")
 			const commit1 = await service.saveCheckpoint("First checkpoint")
@@ -294,11 +301,57 @@ describe("ShadowCheckpointService", () => {
 			await expect(fs.readFile(testFile, "utf-8")).rejects.toThrow()
 			await expect(fs.readFile(untrackedFile, "utf-8")).rejects.toThrow()
 		})
+
+		it("does not create a checkpoint for ignored files", async () => {
+			// Create a file that matches an ignored pattern (e.g., .log file).
+			const ignoredFile = path.join(service.workspaceDir, "ignored.log")
+			await fs.writeFile(ignoredFile, "Initial ignored content")
+
+			const commit = await service.saveCheckpoint("Ignored file checkpoint")
+			expect(commit?.commit).toBeFalsy()
+
+			await fs.writeFile(ignoredFile, "Modified ignored content")
+
+			const commit2 = await service.saveCheckpoint("Ignored file modified checkpoint")
+			expect(commit2?.commit).toBeFalsy()
+
+			expect(await fs.readFile(ignoredFile, "utf-8")).toBe("Modified ignored content")
+		})
+
+		it("does not create a checkpoint for LFS files", async () => {
+			// Create a .gitattributes file with LFS patterns.
+			const gitattributesPath = path.join(service.workspaceDir, ".gitattributes")
+			await fs.writeFile(gitattributesPath, "*.lfs filter=lfs diff=lfs merge=lfs -text")
+
+			// Re-initialize the service to trigger a write to .git/info/exclude.
+			service = new klass(service.taskId, service.checkpointsDir, service.workspaceDir, () => {})
+			const excludesPath = path.join(service.checkpointsDir, ".git", "info", "exclude")
+			expect((await fs.readFile(excludesPath, "utf-8")).split("\n")).not.toContain("*.lfs")
+			await service.initShadowGit()
+			expect((await fs.readFile(excludesPath, "utf-8")).split("\n")).toContain("*.lfs")
+
+			const commit0 = await service.saveCheckpoint("Add gitattributes")
+			expect(commit0?.commit).toBeTruthy()
+
+			// Create a file that matches an LFS pattern.
+			const lfsFile = path.join(service.workspaceDir, "foo.lfs")
+			await fs.writeFile(lfsFile, "Binary file content simulation")
+
+			const commit = await service.saveCheckpoint("LFS file checkpoint")
+			expect(commit?.commit).toBeFalsy()
+
+			await fs.writeFile(lfsFile, "Modified binary content")
+
+			const commit2 = await service.saveCheckpoint("LFS file modified checkpoint")
+			expect(commit2?.commit).toBeFalsy()
+
+			expect(await fs.readFile(lfsFile, "utf-8")).toBe("Modified binary content")
+		})
 	})
 
-	describe("create", () => {
+	describe(`${klass.name}#create`, () => {
 		it("initializes a git repository if one does not already exist", async () => {
-			const shadowDir = path.join(tmpDir, `shadow2-${Date.now()}`)
+			const shadowDir = path.join(tmpDir, `${prefix}2-${Date.now()}`)
 			const workspaceDir = path.join(tmpDir, `workspace2-${Date.now()}`)
 			await fs.mkdir(workspaceDir)
 
@@ -307,10 +360,11 @@ describe("ShadowCheckpointService", () => {
 			expect(await fs.readFile(newTestFile, "utf-8")).toBe("Hello, world!")
 
 			// Ensure the git repository was initialized.
-			const gitDir = path.join(shadowDir, "tasks", taskId, "checkpoints", ".git")
-			await expect(fs.stat(gitDir)).rejects.toThrow()
-			const newService = await ShadowCheckpointService.create({ taskId, shadowDir, workspaceDir, log: () => {} })
-			await newService.initShadowGit()
+			const newService = await klass.create({ taskId, shadowDir, workspaceDir, log: () => {} })
+			const { created } = await newService.initShadowGit()
+			expect(created).toBeTruthy()
+
+			const gitDir = path.join(newService.checkpointsDir, ".git")
 			expect(await fs.stat(gitDir)).toBeTruthy()
 
 			// Save a new checkpoint: Ahoy, world!
@@ -327,15 +381,115 @@ describe("ShadowCheckpointService", () => {
 			await newService.restoreCheckpoint(commit1!.commit)
 			expect(await fs.readFile(newTestFile, "utf-8")).toBe("Ahoy, world!")
 
-			await fs.rm(newService.shadowDir, { recursive: true, force: true })
+			await fs.rm(newService.checkpointsDir, { recursive: true, force: true })
 			await fs.rm(newService.workspaceDir, { recursive: true, force: true })
 		})
 	})
 
-	describe("events", () => {
+	describe(`${klass.name}#renameNestedGitRepos`, () => {
+		it("handles nested git repositories during initialization", async () => {
+			// Create a new temporary workspace and service for this test.
+			const shadowDir = path.join(tmpDir, `${prefix}-nested-git-${Date.now()}`)
+			const workspaceDir = path.join(tmpDir, `workspace-nested-git-${Date.now()}`)
+
+			// Create a primary workspace repo.
+			await fs.mkdir(workspaceDir, { recursive: true })
+			const mainGit = simpleGit(workspaceDir)
+			await mainGit.init()
+			await mainGit.addConfig("user.name", "Roo Code")
+			await mainGit.addConfig("user.email", "support@roocode.com")
+
+			// Create a nested repo inside the workspace.
+			const nestedRepoPath = path.join(workspaceDir, "nested-project")
+			await fs.mkdir(nestedRepoPath, { recursive: true })
+			const nestedGit = simpleGit(nestedRepoPath)
+			await nestedGit.init()
+			await nestedGit.addConfig("user.name", "Roo Code")
+			await nestedGit.addConfig("user.email", "support@roocode.com")
+
+			// Add a file to the nested repo.
+			const nestedFile = path.join(nestedRepoPath, "nested-file.txt")
+			await fs.writeFile(nestedFile, "Content in nested repo")
+			await nestedGit.add(".")
+			await nestedGit.commit("Initial commit in nested repo")
+
+			// Create a test file in the main workspace.
+			const mainFile = path.join(workspaceDir, "main-file.txt")
+			await fs.writeFile(mainFile, "Content in main repo")
+			await mainGit.add(".")
+			await mainGit.commit("Initial commit in main repo")
+
+			// Confirm nested git directory exists before initialization.
+			const nestedGitDir = path.join(nestedRepoPath, ".git")
+			const nestedGitDisabledDir = `${nestedGitDir}_disabled`
+			expect(await fileExistsAtPath(nestedGitDir)).toBe(true)
+			expect(await fileExistsAtPath(nestedGitDisabledDir)).toBe(false)
+
+			// Configure globby mock to return our nested git repository.
+			const relativeGitPath = path.relative(workspaceDir, nestedGitDir)
+
+			jest.mocked(require("globby").globby).mockImplementation((pattern: string | string[]) => {
+				if (pattern === "**/.git") {
+					return Promise.resolve([relativeGitPath])
+				} else if (pattern === "**/.git_disabled") {
+					return Promise.resolve([`${relativeGitPath}_disabled`])
+				}
+
+				return Promise.resolve([])
+			})
+
+			// Create a spy on fs.rename to track when it's called.
+			const renameSpy = jest.spyOn(fs, "rename")
+
+			// Initialize the shadow git service.
+			const service = new klass(taskId, shadowDir, workspaceDir, () => {})
+
+			// Override renameNestedGitRepos to track calls.
+			const originalRenameMethod = service["renameNestedGitRepos"].bind(service)
+			let disableCall = false
+			let enableCall = false
+
+			service["renameNestedGitRepos"] = async (disable: boolean) => {
+				if (disable) {
+					disableCall = true
+				} else {
+					enableCall = true
+				}
+
+				return originalRenameMethod(disable)
+			}
+
+			// Initialize the shadow git repo.
+			await service.initShadowGit()
+
+			// Verify both disable and enable were called.
+			expect(disableCall).toBe(true)
+			expect(enableCall).toBe(true)
+
+			// Verify rename was called with correct paths.
+			const renameCallsArgs = renameSpy.mock.calls.map((call) => call[0] + " -> " + call[1])
+			expect(
+				renameCallsArgs.some((args) => args.includes(nestedGitDir) && args.includes(nestedGitDisabledDir)),
+			).toBe(true)
+			expect(
+				renameCallsArgs.some((args) => args.includes(nestedGitDisabledDir) && args.includes(nestedGitDir)),
+			).toBe(true)
+
+			// Verify the nested git directory is back to normal after initialization.
+			expect(await fileExistsAtPath(nestedGitDir)).toBe(true)
+			expect(await fileExistsAtPath(nestedGitDisabledDir)).toBe(false)
+
+			// Clean up.
+			renameSpy.mockRestore()
+			await fs.rm(shadowDir, { recursive: true, force: true })
+			await fs.rm(workspaceDir, { recursive: true, force: true })
+		})
+	})
+
+	describe(`${klass.name}#events`, () => {
 		it("emits initialize event when service is created", async () => {
-			const shadowDir = path.join(tmpDir, `shadow-event-test-${Date.now()}`)
-			const workspaceDir = path.join(tmpDir, `workspace-event-test-${Date.now()}`)
+			const shadowDir = path.join(tmpDir, `${prefix}3-${Date.now()}`)
+			const workspaceDir = path.join(tmpDir, `workspace3-${Date.now()}`)
 			await fs.mkdir(workspaceDir, { recursive: true })
 
 			const newTestFile = path.join(workspaceDir, "test.txt")
@@ -345,7 +499,7 @@ describe("ShadowCheckpointService", () => {
 			const emitSpy = jest.spyOn(EventEmitter.prototype, "emit")
 
 			// Create the service - this will trigger the initialize event.
-			const newService = await ShadowCheckpointService.create({ taskId, shadowDir, workspaceDir, log: () => {} })
+			const newService = await klass.create({ taskId, shadowDir, workspaceDir, log: () => {} })
 			await newService.initShadowGit()
 
 			// Find the initialize event in the emit calls.
@@ -493,6 +647,85 @@ describe("ShadowCheckpointService", () => {
 
 			// Verify handler was not called after being removed.
 			expect(checkpointHandler).not.toHaveBeenCalled()
+		})
+	})
+})
+
+describe("ShadowCheckpointService", () => {
+	const taskId = "test-task-storage"
+	const tmpDir = path.join(os.tmpdir(), "CheckpointService")
+	const globalStorageDir = path.join(tmpDir, "global-storage-dir")
+	const workspaceDir = path.join(tmpDir, "workspace-dir")
+	const workspaceHash = ShadowCheckpointService.hashWorkspaceDir(workspaceDir)
+
+	beforeEach(async () => {
+		await fs.mkdir(globalStorageDir, { recursive: true })
+		await fs.mkdir(workspaceDir, { recursive: true })
+	})
+
+	afterEach(async () => {
+		await fs.rm(globalStorageDir, { recursive: true, force: true })
+		await fs.rm(workspaceDir, { recursive: true, force: true })
+	})
+
+	describe("getTaskStorage", () => {
+		it("returns 'task' when task repo exists", async () => {
+			const service = RepoPerTaskCheckpointService.create({
+				taskId,
+				shadowDir: globalStorageDir,
+				workspaceDir,
+				log: () => {},
+			})
+
+			await service.initShadowGit()
+
+			const storage = await ShadowCheckpointService.getTaskStorage({ taskId, globalStorageDir, workspaceDir })
+			expect(storage).toBe("task")
+		})
+
+		it("returns 'workspace' when workspace repo exists with task branch", async () => {
+			const service = RepoPerWorkspaceCheckpointService.create({
+				taskId,
+				shadowDir: globalStorageDir,
+				workspaceDir,
+				log: () => {},
+			})
+
+			await service.initShadowGit()
+
+			const storage = await ShadowCheckpointService.getTaskStorage({ taskId, globalStorageDir, workspaceDir })
+			expect(storage).toBe("workspace")
+		})
+
+		it("returns undefined when no repos exist", async () => {
+			const storage = await ShadowCheckpointService.getTaskStorage({ taskId, globalStorageDir, workspaceDir })
+			expect(storage).toBeUndefined()
+		})
+
+		it("returns undefined when workspace repo exists but has no task branch", async () => {
+			// Setup: Create workspace repo without the task branch
+			const workspaceRepoDir = path.join(globalStorageDir, "checkpoints", workspaceHash)
+			await fs.mkdir(workspaceRepoDir, { recursive: true })
+
+			// Create git repo without adding the specific branch
+			const git = simpleGit(workspaceRepoDir)
+			await git.init()
+			await git.addConfig("user.name", "Roo Code")
+			await git.addConfig("user.email", "noreply@example.com")
+
+			// We need to create a commit, but we won't create the specific branch
+			const testFile = path.join(workspaceRepoDir, "test.txt")
+			await fs.writeFile(testFile, "Test content")
+			await git.add(".")
+			await git.commit("Initial commit")
+
+			const storage = await ShadowCheckpointService.getTaskStorage({
+				taskId,
+				globalStorageDir,
+				workspaceDir,
+			})
+
+			expect(storage).toBeUndefined()
 		})
 	})
 })

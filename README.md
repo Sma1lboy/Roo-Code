@@ -2,8 +2,8 @@
   <h2>Join the Roo Code Community</h2>
   <p>Connect with developers, contribute ideas, and stay ahead with the latest AI-powered coding tools.</p>
   
-  <a href="https://discord.gg/roocode" target="_blank"><img src="https://img.shields.io/badge/Join%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join Discord" height="60"></a>
-  <a href="https://www.reddit.com/r/RooCode/" target="_blank"><img src="https://img.shields.io/badge/Join%20Reddit-FF4500?style=for-the-badge&logo=reddit&logoColor=white" alt="Join Reddit" height="60"></a>
+  <a href="https://discord.gg/roocode" target="_blank"><img src="https://img.shields.io/badge/Join%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join Discord"></a>
+  <a href="https://www.reddit.com/r/RooCode/" target="_blank"><img src="https://img.shields.io/badge/Join%20Reddit-FF4500?style=for-the-badge&logo=reddit&logoColor=white" alt="Join Reddit"></a>
   
 </div>
 <br>
@@ -34,15 +34,18 @@ Check out the [CHANGELOG](CHANGELOG.md) for detailed updates and fixes.
 
 ---
 
-## New in 3.7: Claude 3.7 Sonnet Support 🚀
+## 🎉 Roo Code 3.8 Released
 
-We're excited to announce support for Anthropic's latest model, Claude 3.7 Sonnet! The model shows notable improvements in:
+Roo Code 3.8 is out with performance boosts, new features, and bug fixes.
 
-- Front-end development and full-stack updates
-- Agentic workflows for multi-step processes
-- More accurate math, coding, and instruction-following
-
-Try it today in your provider of choice!
+- Faster asynchronous checkpoints
+- Support for .rooignore files
+- Fixed terminal & gray screen issues
+- Roo Code can run in multiple windows
+- Experimental multi-diff editing strategy
+- Subtask to parent task communication
+- Updated DeepSeek provider
+- New "Human Relay" provider
 
 ---
 
@@ -121,9 +124,9 @@ Make Roo Code work your way with:
     ```
 
 if that fails, try:
-    ```bash
+`bash
     npm run install:ci
-    ```
+    `
 
 3. **Build** the extension:
     ```bash

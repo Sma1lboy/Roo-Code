@@ -1,8 +1,11 @@
 import pWaitFor from "p-wait-for"
 import * as vscode from "vscode"
+
+import { TERMINAL_OUTPUT_LIMIT } from "../../shared/terminal"
 import { arePathsEqual } from "../../utils/path"
-import { mergePromise, TerminalProcess, TerminalProcessResultPromise } from "./TerminalProcess"
+import { TerminalProcess } from "./TerminalProcess"
 import { TerminalInfo, TerminalRegistry } from "./TerminalRegistry"
+import { mergePromise, TerminalProcessResultPromise } from "./mergePromise"
 
 /*
 TerminalManager:
@@ -14,8 +17,6 @@ TerminalProcess extends EventEmitter and implements Promise:
 - Emits 'line' events with output while promise is pending
 - process.continue() resolves promise and stops event emission
 - Allows real-time output handling or background execution
-
-getUnretrievedOutput() fetches latest output for ongoing commands
 
 Enables flexible command execution:
 - Await for completion
@@ -29,7 +30,6 @@ Notes:
 Supported shells:
 Linux/macOS: bash, fish, pwsh, zsh
 Windows: pwsh
-
 
 Example:
 
@@ -49,7 +49,7 @@ await process;
 process.continue();
 
 // Later, if you need to get the unretrieved output:
-const unretrievedOutput = terminalManager.getUnretrievedOutput(terminalId);
+const unretrievedOutput = terminalManager.readLine(terminalId);
 console.log('Unretrieved output:', unretrievedOutput);
 
 Resources:
@@ -82,7 +82,10 @@ declare module "vscode" {
 	// https://github.com/microsoft/vscode/blob/f0417069c62e20f3667506f4b7e53ca0004b4e3e/src/vscode-dts/vscode.d.ts#L10794
 	interface Window {
 		onDidStartTerminalShellExecution?: (
-			listener: (e: any) => any,
+			listener: (e: {
+				terminal: vscode.Terminal
+				execution: { read(): AsyncIterable<string>; commandLine: { value: string } }
+			}) => any,
 			thisArgs?: any,
 			disposables?: vscode.Disposable[],
 		) => vscode.Disposable
@@ -203,66 +206,90 @@ export class TerminalManager {
 	constructor() {
 		let startDisposable: vscode.Disposable | undefined
 		let endDisposable: vscode.Disposable | undefined
+
 		try {
 			// onDidStartTerminalShellExecution
 			startDisposable = (vscode.window as vscode.Window).onDidStartTerminalShellExecution?.(async (e) => {
 				// Get a handle to the stream as early as possible:
 				const stream = e?.execution.read()
 				const terminalInfo = TerminalRegistry.getTerminalInfoByTerminal(e.terminal)
-				if (stream && terminalInfo) {
-					const process = this.processes.get(terminalInfo.id)
-					if (process) {
-						terminalInfo.stream = stream
-						terminalInfo.running = true
-						terminalInfo.streamClosed = false
-						process.emit("stream_available", terminalInfo.id, stream)
-					}
-				} else {
-					console.error("[TerminalManager] Stream failed, not registered for terminal")
-				}
 
-				console.info("[TerminalManager] Shell execution started:", {
+				console.info("[TerminalManager] shell execution started", {
 					hasExecution: !!e?.execution,
+					hasStream: !!stream,
 					command: e?.execution?.commandLine?.value,
 					terminalId: terminalInfo?.id,
 				})
+
+				if (terminalInfo) {
+					const process = this.processes.get(terminalInfo.id)
+
+					if (process) {
+						if (stream) {
+							terminalInfo.stream = stream
+							terminalInfo.running = true
+							terminalInfo.streamClosed = false
+							console.log(`[TerminalManager] stream_available -> ${terminalInfo.id}`)
+							process.emit("stream_available", terminalInfo.id, stream)
+						} else {
+							process.emit("stream_unavailable", terminalInfo.id)
+							console.error(`[TerminalManager] stream_unavailable -> ${terminalInfo.id}`)
+						}
+					}
+				} else {
+					console.error("[TerminalManager] terminalInfo not available")
+				}
 			})
 
 			// onDidEndTerminalShellExecution
 			endDisposable = (vscode.window as vscode.Window).onDidEndTerminalShellExecution?.(async (e) => {
 				const exitDetails = this.interpretExitCode(e?.exitCode)
-				console.info("[TerminalManager] Shell execution ended:", {
-					...exitDetails,
-				})
+				console.info("[TerminalManager] Shell execution ended:", { ...exitDetails })
+				let emitted = false
 
-				// Signal completion to any waiting processes
+				// Signal completion to any waiting processes.
 				for (const id of this.terminalIds) {
 					const info = TerminalRegistry.getTerminal(id)
+
 					if (info && info.terminal === e.terminal) {
 						info.running = false
 						const process = this.processes.get(id)
+
 						if (process) {
+							console.log(`[TerminalManager] emitting shell_execution_complete -> ${id}`)
+							emitted = true
 							process.emit("shell_execution_complete", id, exitDetails)
 						}
+
 						break
 					}
 				}
+
+				if (!emitted) {
+					console.log(`[TerminalManager#onDidStartTerminalShellExecution] no terminal found`)
+				}
 			})
 		} catch (error) {
-			console.error("[TerminalManager] Error setting up shell execution handlers:", error)
+			console.error("[TerminalManager] failed to configure shell execution handlers", error)
 		}
+
 		if (startDisposable) {
 			this.disposables.push(startDisposable)
 		}
+
 		if (endDisposable) {
 			this.disposables.push(endDisposable)
 		}
 	}
 
-	runCommand(terminalInfo: TerminalInfo, command: string): TerminalProcessResultPromise {
+	runCommand(
+		terminalInfo: TerminalInfo,
+		command: string,
+		terminalOutputLimit = TERMINAL_OUTPUT_LIMIT,
+	): TerminalProcessResultPromise {
 		terminalInfo.busy = true
 		terminalInfo.lastCommand = command
-		const process = new TerminalProcess()
+		const process = new TerminalProcess(terminalOutputLimit)
 		this.processes.set(terminalInfo.id, process)
 
 		process.once("completed", () => {
@@ -347,12 +374,13 @@ export class TerminalManager {
 			.map((t) => ({ id: t.id, lastCommand: t.lastCommand }))
 	}
 
-	getUnretrievedOutput(terminalId: number): string {
+	readLine(terminalId: number): string {
 		if (!this.terminalIds.has(terminalId)) {
 			return ""
 		}
+
 		const process = this.processes.get(terminalId)
-		return process ? process.getUnretrievedOutput() : ""
+		return process ? process.readLine() : ""
 	}
 
 	isProcessHot(terminalId: number): boolean {
@@ -361,9 +389,6 @@ export class TerminalManager {
 	}
 
 	disposeAll() {
-		// for (const info of this.terminals) {
-		// 	//info.terminal.dispose() // dont want to dispose terminals when task is aborted
-		// }
 		this.terminalIds.clear()
 		this.processes.clear()
 		this.disposables.forEach((disposable) => disposable.dispose())

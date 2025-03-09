@@ -16,9 +16,13 @@ import { ApiStream, ApiStreamUsageChunk } from "../transform/stream"
 import { BaseProvider } from "./base-provider"
 
 const DEEP_SEEK_DEFAULT_TEMPERATURE = 0.6
-export interface OpenAiHandlerOptions extends ApiHandlerOptions {
-	defaultHeaders?: Record<string, string>
+
+export const defaultHeaders = {
+	"HTTP-Referer": "https://github.com/RooVetGit/Roo-Cline",
+	"X-Title": "Roo Code",
 }
+
+export interface OpenAiHandlerOptions extends ApiHandlerOptions {}
 
 export class OpenAiHandler extends BaseProvider implements SingleCompletionHandler {
 	protected options: OpenAiHandlerOptions
@@ -47,9 +51,10 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 				baseURL,
 				apiKey,
 				apiVersion: this.options.azureApiVersion || azureOpenAiDefaultApiVersion,
+				defaultHeaders,
 			})
 		} else {
-			this.client = new OpenAI({ baseURL, apiKey, defaultHeaders: this.options.defaultHeaders })
+			this.client = new OpenAI({ baseURL, apiKey, defaultHeaders })
 		}
 	}
 
@@ -60,6 +65,11 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 
 		const deepseekReasoner = modelId.includes("deepseek-reasoner")
 		const ark = modelUrl.includes(".volces.com")
+
+		if (modelId.startsWith("o3-mini")) {
+			yield* this.handleO3FamilyMessage(modelId, systemPrompt, messages)
+			return
+		}
 
 		if (this.options.openAiStreamingEnabled ?? true) {
 			const systemMessage: OpenAI.Chat.ChatCompletionSystemMessageParam = {
@@ -162,6 +172,69 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 				throw new Error(`OpenAI completion error: ${error.message}`)
 			}
 			throw error
+		}
+	}
+
+	private async *handleO3FamilyMessage(
+		modelId: string,
+		systemPrompt: string,
+		messages: Anthropic.Messages.MessageParam[],
+	): ApiStream {
+		if (this.options.openAiStreamingEnabled ?? true) {
+			const stream = await this.client.chat.completions.create({
+				model: "o3-mini",
+				messages: [
+					{
+						role: "developer",
+						content: `Formatting re-enabled\n${systemPrompt}`,
+					},
+					...convertToOpenAiMessages(messages),
+				],
+				stream: true,
+				stream_options: { include_usage: true },
+				reasoning_effort: this.getModel().info.reasoningEffort,
+			})
+
+			yield* this.handleStreamResponse(stream)
+		} else {
+			const requestOptions: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+				model: modelId,
+				messages: [
+					{
+						role: "developer",
+						content: `Formatting re-enabled\n${systemPrompt}`,
+					},
+					...convertToOpenAiMessages(messages),
+				],
+			}
+
+			const response = await this.client.chat.completions.create(requestOptions)
+
+			yield {
+				type: "text",
+				text: response.choices[0]?.message.content || "",
+			}
+			yield this.processUsageMetrics(response.usage)
+		}
+	}
+
+	private async *handleStreamResponse(stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>): ApiStream {
+		for await (const chunk of stream) {
+			const delta = chunk.choices[0]?.delta
+			if (delta?.content) {
+				yield {
+					type: "text",
+					text: delta.content,
+				}
+			}
+
+			if (chunk.usage) {
+				yield {
+					type: "usage",
+					inputTokens: chunk.usage.prompt_tokens || 0,
+					outputTokens: chunk.usage.completion_tokens || 0,
+				}
+			}
 		}
 	}
 }

@@ -1,6 +1,6 @@
 import { Anthropic } from "@anthropic-ai/sdk"
 import cloneDeep from "clone-deep"
-import { DiffStrategy, getDiffStrategy, UnifiedDiffStrategy } from "./diff/DiffStrategy"
+import { DiffStrategy, getDiffStrategy } from "./diff/DiffStrategy"
 import { validateToolUse, isToolAllowedForMode, ToolName } from "./mode-validator"
 import delay from "delay"
 import fs from "fs/promises"
@@ -10,23 +10,28 @@ import getFolderSize from "get-folder-size"
 import * as path from "path"
 import { serializeError } from "serialize-error"
 import * as vscode from "vscode"
+
 import { ApiHandler, buildApiHandler } from "../api"
 import { ApiStream } from "../api/transform/stream"
 import { DIFF_VIEW_URI_SCHEME, DiffViewProvider } from "../integrations/editor/DiffViewProvider"
-import { ShadowCheckpointService } from "../services/checkpoints/ShadowCheckpointService"
+import {
+	CheckpointServiceOptions,
+	RepoPerTaskCheckpointService,
+	RepoPerWorkspaceCheckpointService,
+} from "../services/checkpoints"
 import { findToolName, formatContentBlockToMarkdown } from "../integrations/misc/export-markdown"
 import {
 	extractTextFromFile,
 	addLineNumbers,
 	stripLineNumbers,
 	everyLineHasLineNumbers,
-	truncateOutput,
 } from "../integrations/misc/extract-text"
 import { TerminalManager, ExitCodeDetails } from "../integrations/terminal/TerminalManager"
 import { UrlContentFetcher } from "../services/browser/UrlContentFetcher"
 import { listFiles } from "../services/glob/list-files"
 import { regexSearchFiles } from "../services/ripgrep"
 import { parseSourceCodeForDefinitionsTopLevel } from "../services/tree-sitter"
+import { CheckpointStorage } from "../shared/checkpoints"
 import { ApiConfiguration } from "../shared/api"
 import { findLastIndex } from "../shared/array"
 import { combineApiRequests } from "../shared/combineApiRequests"
@@ -49,10 +54,12 @@ import { HistoryItem } from "../shared/HistoryItem"
 import { ClineAskResponse } from "../shared/WebviewMessage"
 import { GlobalFileNames } from "../shared/globalFileNames"
 import { defaultModeSlug, getModeBySlug, getFullModeDetails } from "../shared/modes"
+import { EXPERIMENT_IDS, experiments as Experiments, ExperimentId } from "../shared/experiments"
 import { calculateApiCost } from "../utils/cost"
 import { fileExistsAtPath } from "../utils/fs"
 import { arePathsEqual, getReadablePath } from "../utils/path"
 import { parseMentions } from "./mentions"
+import { RooIgnoreController } from "./ignore/RooIgnoreController"
 import { AssistantMessageContent, parseAssistantMessage, ToolParamName, ToolUseName } from "./assistant-message"
 import { formatResponse } from "./prompts/responses"
 import { SYSTEM_PROMPT } from "./prompts/system"
@@ -63,7 +70,8 @@ import { BrowserSession } from "../services/browser/BrowserSession"
 import { McpHub } from "../services/mcp/McpHub"
 import crypto from "crypto"
 import { insertGroups } from "./diff/insert-groups"
-import { EXPERIMENT_IDS, experiments as Experiments, ExperimentId } from "../shared/experiments"
+import { OutputBuilder } from "../integrations/terminal/OutputBuilder"
+import { telemetryService } from "../services/telemetry/TelemetryService"
 
 const cwd =
 	vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath).at(0) ?? path.join(os.homedir(), "Desktop") // may or may not exist but fs checking existence would immediately ask for permission which would be bad UX, need to come up with a better solution
@@ -77,6 +85,7 @@ export type ClineOptions = {
 	customInstructions?: string
 	enableDiff?: boolean
 	enableCheckpoints?: boolean
+	checkpointStorage?: CheckpointStorage
 	fuzzyMatchThreshold?: number
 	task?: string
 	images?: string[]
@@ -87,6 +96,17 @@ export type ClineOptions = {
 
 export class Cline {
 	readonly taskId: string
+	private taskNumber: number
+	// a flag that indicated if this Cline instance is a subtask (on finish return control to parent task)
+	private isSubTask: boolean = false
+	// a flag that indicated if this Cline instance is paused (waiting for provider to resume it after subtask completion)
+	private isPaused: boolean = false
+	// this is the parent task work mode when it launched the subtask to be used when it is restored (so the last used mode by parent task will also be restored)
+	private pausedModeSlug: string = defaultModeSlug
+	// if this is a subtask then this member holds a pointer to the parent task that launched it
+	private parentTask: Cline | undefined = undefined
+	// if this is a subtask then this member holds a pointer to the top parent task that launched it
+	private rootTask: Cline | undefined = undefined
 	readonly apiConfiguration: ApiConfiguration
 	api: ApiHandler
 	private terminalManager: TerminalManager
@@ -100,6 +120,7 @@ export class Cline {
 
 	apiConversationHistory: (Anthropic.MessageParam & { ts?: number })[] = []
 	clineMessages: ClineMessage[] = []
+	rooIgnoreController?: RooIgnoreController
 	private askResponse?: ClineAskResponse
 	private askResponseText?: string
 	private askResponseImages?: string[]
@@ -115,8 +136,9 @@ export class Cline {
 	isInitialized = false
 
 	// checkpoints
-	enableCheckpoints: boolean = false
-	private checkpointService?: ShadowCheckpointService
+	private enableCheckpoints: boolean
+	private checkpointStorage: CheckpointStorage
+	private checkpointService?: RepoPerTaskCheckpointService | RepoPerWorkspaceCheckpointService
 
 	// streaming
 	isWaitingForFirstChunk = false
@@ -136,7 +158,8 @@ export class Cline {
 		apiConfiguration,
 		customInstructions,
 		enableDiff,
-		enableCheckpoints,
+		enableCheckpoints = true,
+		checkpointStorage = "task",
 		fuzzyMatchThreshold,
 		task,
 		images,
@@ -148,8 +171,13 @@ export class Cline {
 			throw new Error("Either historyItem or task/images must be provided")
 		}
 
-		this.taskId = historyItem ? historyItem.id : crypto.randomUUID()
+		this.rooIgnoreController = new RooIgnoreController(cwd)
+		this.rooIgnoreController.initialize().catch((error) => {
+			console.error("Failed to initialize RooIgnoreController:", error)
+		})
 
+		this.taskId = historyItem ? historyItem.id : crypto.randomUUID()
+		this.taskNumber = -1
 		this.apiConfiguration = apiConfiguration
 		this.api = buildApiHandler(apiConfiguration)
 		this.terminalManager = new TerminalManager()
@@ -160,10 +188,20 @@ export class Cline {
 		this.fuzzyMatchThreshold = fuzzyMatchThreshold ?? 1.0
 		this.providerRef = new WeakRef(provider)
 		this.diffViewProvider = new DiffViewProvider(cwd)
-		this.enableCheckpoints = enableCheckpoints ?? false
+		this.enableCheckpoints = enableCheckpoints
+		this.checkpointStorage = checkpointStorage
+
+		if (historyItem) {
+			telemetryService.captureTaskRestarted(this.taskId)
+		} else {
+			telemetryService.captureTaskCreated(this.taskId)
+		}
 
 		// Initialize diffStrategy based on current state
-		this.updateDiffStrategy(Experiments.isEnabled(experiments ?? {}, EXPERIMENT_IDS.DIFF_STRATEGY))
+		this.updateDiffStrategy(
+			Experiments.isEnabled(experiments ?? {}, EXPERIMENT_IDS.DIFF_STRATEGY),
+			Experiments.isEnabled(experiments ?? {}, EXPERIMENT_IDS.MULTI_SEARCH_AND_REPLACE),
+		)
 
 		if (startTask) {
 			if (task || images) {
@@ -192,14 +230,64 @@ export class Cline {
 		return [instance, promise]
 	}
 
+	// a helper function to set the private member isSubTask to true
+	// and by that set this Cline instance to be a subtask (on finish return control to parent task)
+	setSubTask() {
+		this.isSubTask = true
+	}
+
+	// sets the task number (sequencial number of this task from all the subtask ran from this main task stack)
+	setTaskNumber(taskNumber: number) {
+		this.taskNumber = taskNumber
+	}
+
+	// gets the task number, the sequencial number of this task from all the subtask ran from this main task stack
+	getTaskNumber() {
+		return this.taskNumber
+	}
+
+	// this method returns the cline instance that is the parent task that launched this subtask (assuming this cline is a subtask)
+	// if undefined is returned, then there is no parent task and this is not a subtask or connection has been severed
+	getParentTask(): Cline | undefined {
+		return this.parentTask
+	}
+
+	// this method sets a cline instance that is the parent task that called this task (assuming this cline is a subtask)
+	// if undefined is set, then the connection is broken and the parent is no longer saved in the subtask member
+	setParentTask(parentToSet: Cline | undefined) {
+		this.parentTask = parentToSet
+	}
+
+	// this method returns the cline instance that is the root task (top most parent) that eventually launched this subtask (assuming this cline is a subtask)
+	// if undefined is returned, then there is no root task and this is not a subtask or connection has been severed
+	getRootTask(): Cline | undefined {
+		return this.rootTask
+	}
+
+	// this method sets a cline instance that is the root task (top most patrnt) that called this task (assuming this cline is a subtask)
+	// if undefined is set, then the connection is broken and the root is no longer saved in the subtask member
+	setRootTask(rootToSet: Cline | undefined) {
+		this.rootTask = rootToSet
+	}
+
 	// Add method to update diffStrategy
-	async updateDiffStrategy(experimentalDiffStrategy?: boolean) {
+	async updateDiffStrategy(experimentalDiffStrategy?: boolean, multiSearchReplaceDiffStrategy?: boolean) {
 		// If not provided, get from current state
-		if (experimentalDiffStrategy === undefined) {
+		if (experimentalDiffStrategy === undefined || multiSearchReplaceDiffStrategy === undefined) {
 			const { experiments: stateExperimental } = (await this.providerRef.deref()?.getState()) ?? {}
-			experimentalDiffStrategy = stateExperimental?.[EXPERIMENT_IDS.DIFF_STRATEGY] ?? false
+			if (experimentalDiffStrategy === undefined) {
+				experimentalDiffStrategy = stateExperimental?.[EXPERIMENT_IDS.DIFF_STRATEGY] ?? false
+			}
+			if (multiSearchReplaceDiffStrategy === undefined) {
+				multiSearchReplaceDiffStrategy = stateExperimental?.[EXPERIMENT_IDS.MULTI_SEARCH_AND_REPLACE] ?? false
+			}
 		}
-		this.diffStrategy = getDiffStrategy(this.api.getModel().id, this.fuzzyMatchThreshold, experimentalDiffStrategy)
+		this.diffStrategy = getDiffStrategy(
+			this.api.getModel().id,
+			this.fuzzyMatchThreshold,
+			experimentalDiffStrategy,
+			multiSearchReplaceDiffStrategy,
+		)
 	}
 
 	// Storing task to disk for history
@@ -298,6 +386,7 @@ export class Cline {
 
 			await this.providerRef.deref()?.updateTaskHistory({
 				id: this.taskId,
+				number: this.taskNumber,
 				ts: lastRelevantMessage.ts,
 				task: taskMessage.text ?? "",
 				tokensIn: apiMetrics.totalTokensIn,
@@ -322,7 +411,7 @@ export class Cline {
 	): Promise<{ response: ClineAskResponse; text?: string; images?: string[] }> {
 		// If this Cline instance was aborted by the provider, then the only thing keeping us alive is a promise still running in the background, in which case we don't want to send its result to the webview as it is attached to a new instance of Cline now. So we can safely ignore the result of any active promises, and this class will be deallocated. (Although we set Cline = undefined in provider, that simply removes the reference to this instance, but the instance is still alive until this promise resolves or rejects.)
 		if (this.abort) {
-			throw new Error("Roo Code instance aborted")
+			throw new Error(`Task: ${this.taskNumber} Roo Code instance aborted (#1)`)
 		}
 		let askTs: number
 		if (partial !== undefined) {
@@ -340,7 +429,7 @@ export class Cline {
 					await this.providerRef
 						.deref()
 						?.postMessageToWebview({ type: "partialMessage", partialMessage: lastMessage })
-					throw new Error("Current ask promise was ignored 1")
+					throw new Error("Current ask promise was ignored (#1)")
 				} else {
 					// this is a new partial message, so add it with partial state
 					// this.askResponse = undefined
@@ -350,7 +439,7 @@ export class Cline {
 					this.lastMessageTs = askTs
 					await this.addToClineMessages({ ts: askTs, type: "ask", ask: type, text, partial })
 					await this.providerRef.deref()?.postStateToWebview()
-					throw new Error("Current ask promise was ignored 2")
+					throw new Error("Current ask promise was ignored (#2)")
 				}
 			} else {
 				// partial=false means its a complete version of a previously partial message
@@ -424,7 +513,7 @@ export class Cline {
 		checkpoint?: Record<string, unknown>,
 	): Promise<undefined> {
 		if (this.abort) {
-			throw new Error("Roo Code instance aborted")
+			throw new Error(`Task: ${this.taskNumber} Roo Code instance aborted (#2)`)
 		}
 
 		if (partial !== undefined) {
@@ -510,6 +599,32 @@ export class Cline {
 			},
 			...imageBlocks,
 		])
+	}
+
+	async resumePausedTask(lastMessage?: string) {
+		// release this Cline instance from paused state
+		this.isPaused = false
+
+		// fake an answer from the subtask that it has completed running and this is the result of what it has done
+		// add the message to the chat history and to the webview ui
+		try {
+			await this.say("text", `${lastMessage ?? "Please continue to the next task."}`)
+
+			await this.addToApiConversationHistory({
+				role: "user",
+				content: [
+					{
+						type: "text",
+						text: `[new_task completed] Result: ${lastMessage ?? "Please continue to the next task."}`,
+					},
+				],
+			})
+		} catch (error) {
+			this.providerRef
+				.deref()
+				?.log(`Error failed to add reply from subtast into conversation of parent task, error: ${error}`)
+			throw error
+		}
 	}
 
 	private async resumeTaskFromHistory() {
@@ -747,7 +862,8 @@ export class Cline {
 	}
 
 	private async initiateTaskLoop(userContent: UserContent): Promise<void> {
-		this.initializeCheckpoints()
+		// Kicks off the checkpoints initialization process in the background.
+		this.getCheckpointService()
 
 		let nextUserContent = userContent
 		let includeFileDetails = true
@@ -791,6 +907,7 @@ export class Cline {
 		this.terminalManager.disposeAll()
 		this.urlContentFetcher.closeBrowser()
 		this.browserSession.closeBrowser()
+		this.rooIgnoreController?.dispose()
 
 		// If we're not streaming then `abortStream` (which reverts the diff
 		// view changes) won't be called, so we need to revert the changes here.
@@ -802,30 +919,43 @@ export class Cline {
 	// Tools
 
 	async executeCommandTool(command: string): Promise<[boolean, ToolResponse]> {
+		const { terminalOutputLimit } = (await this.providerRef.deref()?.getState()) ?? {}
+
 		const terminalInfo = await this.terminalManager.getOrCreateTerminal(cwd)
-		terminalInfo.terminal.show() // weird visual bug when creating new terminals (even manually) where there's an empty space at the top.
-		const process = this.terminalManager.runCommand(terminalInfo, command)
+		// Weird visual bug when creating new terminals (even manually) where
+		// there's an empty space at the top.
+		terminalInfo.terminal.show()
+		const process = this.terminalManager.runCommand(terminalInfo, command, terminalOutputLimit)
 
 		let userFeedback: { text?: string; images?: string[] } | undefined
 		let didContinue = false
-		const sendCommandOutput = async (line: string): Promise<void> => {
+
+		const sendCommandOutput = async (line: string) => {
 			try {
 				const { response, text, images } = await this.ask("command_output", line)
+
 				if (response === "yesButtonClicked") {
-					// proceed while running
+					// Proceed while running.
 				} else {
 					userFeedback = { text, images }
 				}
+
 				didContinue = true
-				process.continue() // continue past the await
+				process.continue() // Continue past the await.
 			} catch {
-				// This can only happen if this ask promise was ignored, so ignore this error
+				// This can only happen if this ask promise was ignored, so ignore this error.
 			}
 		}
 
-		let lines: string[] = []
+		let completed = false
+		let exitDetails: ExitCodeDetails | undefined
+
+		let builder = new OutputBuilder({ maxSize: terminalOutputLimit })
+		let output: string | undefined = undefined
+
 		process.on("line", (line) => {
-			lines.push(line)
+			builder.append(line)
+
 			if (!didContinue) {
 				sendCommandOutput(line)
 			} else {
@@ -833,13 +963,8 @@ export class Cline {
 			}
 		})
 
-		let completed = false
-		let exitDetails: ExitCodeDetails | undefined
-		process.once("completed", (output?: string) => {
-			// Use provided output if available, otherwise keep existing result.
-			if (output) {
-				lines = output.split("\n")
-			}
+		process.once("completed", (buffer?: string) => {
+			output = buffer
 			completed = true
 		})
 
@@ -853,21 +978,25 @@ export class Cline {
 			await this.say("shell_integration_warning")
 		})
 
+		process.once("stream_stalled", async (id: number) => {
+			if (id === terminalInfo.id && !didContinue) {
+				sendCommandOutput("")
+			}
+		})
+
 		await process
 
-		// Wait for a short delay to ensure all messages are sent to the webview
+		// Wait for a short delay to ensure all messages are sent to the webview.
 		// This delay allows time for non-awaited promises to be created and
 		// for their associated messages to be sent to the webview, maintaining
 		// the correct order of messages (although the webview is smart about
-		// grouping command_output messages despite any gaps anyways)
+		// grouping command_output messages despite any gaps anyways).
 		await delay(50)
-
-		const { terminalOutputLineLimit } = (await this.providerRef.deref()?.getState()) ?? {}
-		const output = truncateOutput(lines.join("\n"), terminalOutputLineLimit)
-		const result = output.trim()
+		const result = output || builder.content
 
 		if (userFeedback) {
 			await this.say("user_feedback", userFeedback.text, userFeedback.images)
+
 			return [
 				true,
 				formatResponse.toolResult(
@@ -881,9 +1010,11 @@ export class Cline {
 
 		if (completed) {
 			let exitStatus = "No exit code available"
+
 			if (exitDetails !== undefined) {
 				if (exitDetails.signal) {
 					exitStatus = `Process terminated by signal ${exitDetails.signal} (${exitDetails.signalName})`
+
 					if (exitDetails.coreDumpPossible) {
 						exitStatus += " - core dump possible"
 					}
@@ -891,15 +1022,16 @@ export class Cline {
 					exitStatus = `Exit code: ${exitDetails.exitCode}`
 				}
 			}
+
 			return [false, `Command executed. ${exitStatus}${result.length > 0 ? `\nOutput:\n${result}` : ""}`]
-		} else {
-			return [
-				false,
-				`Command is still running in the user's terminal.${
-					result.length > 0 ? `\nHere's the output so far:\n${result}` : ""
-				}\n\nYou will be updated on the terminal status and new output in the future.`,
-			]
 		}
+
+		return [
+			false,
+			`Command is still running in the user's terminal.${
+				result.length > 0 ? `\nHere's the output so far:\n${result}` : ""
+			}\n\nYou will be updated on the terminal status and new output in the future.`,
+		]
 	}
 
 	async *attemptApiRequest(previousApiReqIndex: number, retryAttempt: number = 0): ApiStream {
@@ -942,6 +1074,8 @@ export class Cline {
 			})
 		}
 
+		const rooIgnoreInstructions = this.rooIgnoreController?.getInstructions()
+
 		const {
 			browserViewportSize,
 			mode,
@@ -972,6 +1106,7 @@ export class Cline {
 				this.diffEnabled,
 				experiments,
 				enableMcpServerCreation,
+				rooIgnoreInstructions,
 			)
 		})()
 
@@ -989,9 +1124,12 @@ export class Cline {
 
 			const totalTokens = tokensIn + tokensOut + cacheWrites + cacheReads
 
+			// Default max tokens value for thinking models when no specific value is set
+			const DEFAULT_THINKING_MODEL_MAX_TOKENS = 16_384
+
 			const modelInfo = this.api.getModel().info
 			const maxTokens = modelInfo.thinking
-				? this.apiConfiguration.modelMaxTokens || modelInfo.maxTokens
+				? this.apiConfiguration.modelMaxTokens || DEFAULT_THINKING_MODEL_MAX_TOKENS
 				: modelInfo.maxTokens
 			const contextWindow = modelInfo.contextWindow
 			const trimmedMessages = await truncateConversationIfNeeded({
@@ -1094,7 +1232,7 @@ export class Cline {
 
 	async presentAssistantMessage() {
 		if (this.abort) {
-			throw new Error("Roo Code instance aborted")
+			throw new Error(`Task: ${this.taskNumber} Roo Code instance aborted (#3)`)
 		}
 
 		if (this.presentAssistantMessageLocked) {
@@ -1318,6 +1456,10 @@ export class Cline {
 					await this.browserSession.closeBrowser()
 				}
 
+				if (!block.partial) {
+					telemetryService.captureToolUsage(this.taskId, block.name)
+				}
+
 				// Validate tool use before execution
 				const { mode, customModes } = (await this.providerRef.deref()?.getState()) ?? {}
 				try {
@@ -1346,6 +1488,15 @@ export class Cline {
 							// wait so we can determine if it's a new file or editing an existing file
 							break
 						}
+
+						const accessAllowed = this.rooIgnoreController?.validateAccess(relPath)
+						if (!accessAllowed) {
+							await this.say("rooignore_error", relPath)
+							pushToolResult(formatResponse.toolError(formatResponse.rooIgnoreError(relPath)))
+
+							break
+						}
+
 						// Check if file exists using cached map or fs.access
 						let fileExists: boolean
 						if (this.diffViewProvider.editType !== undefined) {
@@ -1555,6 +1706,14 @@ export class Cline {
 									break
 								}
 
+								const accessAllowed = this.rooIgnoreController?.validateAccess(relPath)
+								if (!accessAllowed) {
+									await this.say("rooignore_error", relPath)
+									pushToolResult(formatResponse.toolError(formatResponse.rooIgnoreError(relPath)))
+
+									break
+								}
+
 								const absolutePath = path.resolve(cwd, relPath)
 								const fileExists = await fileExistsAtPath(absolutePath)
 
@@ -1578,17 +1737,36 @@ export class Cline {
 									success: false,
 									error: "No diff strategy available",
 								}
+								let partResults = ""
+
 								if (!diffResult.success) {
 									this.consecutiveMistakeCount++
 									const currentCount =
 										(this.consecutiveMistakeCountForApplyDiff.get(relPath) || 0) + 1
 									this.consecutiveMistakeCountForApplyDiff.set(relPath, currentCount)
-									const errorDetails = diffResult.details
-										? JSON.stringify(diffResult.details, null, 2)
-										: ""
-									const formattedError = `Unable to apply diff to file: ${absolutePath}\n\n<error_details>\n${
-										diffResult.error
-									}${errorDetails ? `\n\nDetails:\n${errorDetails}` : ""}\n</error_details>`
+									let formattedError = ""
+									if (diffResult.failParts && diffResult.failParts.length > 0) {
+										for (const failPart of diffResult.failParts) {
+											if (failPart.success) {
+												continue
+											}
+											const errorDetails = failPart.details
+												? JSON.stringify(failPart.details, null, 2)
+												: ""
+											formattedError = `<error_details>\n${
+												failPart.error
+											}${errorDetails ? `\n\nDetails:\n${errorDetails}` : ""}\n</error_details>`
+											partResults += formattedError
+										}
+									} else {
+										const errorDetails = diffResult.details
+											? JSON.stringify(diffResult.details, null, 2)
+											: ""
+										formattedError = `Unable to apply diff to file: ${absolutePath}\n\n<error_details>\n${
+											diffResult.error
+										}${errorDetails ? `\n\nDetails:\n${errorDetails}` : ""}\n</error_details>`
+									}
+
 									if (currentCount >= 2) {
 										await this.say("error", formattedError)
 									}
@@ -1618,6 +1796,10 @@ export class Cline {
 								const { newProblemsMessage, userEdits, finalContent } =
 									await this.diffViewProvider.saveChanges()
 								this.didEditFile = true // used to determine if we should wait for busy terminal to update before sending api request
+								let partFailHint = ""
+								if (diffResult.failParts && diffResult.failParts.length > 0) {
+									partFailHint = `But unable to apply all diff parts to file: ${absolutePath}, silently use <read_file> tool to check newest file version and re-apply diffs\n`
+								}
 								if (userEdits) {
 									await this.say(
 										"user_feedback_diff",
@@ -1629,6 +1811,7 @@ export class Cline {
 									)
 									pushToolResult(
 										`The user made the following updates to your content:\n\n${userEdits}\n\n` +
+											partFailHint +
 											`The updated content, which includes both your original modifications and the user's edits, has been successfully saved to ${relPath.toPosix()}. Here is the full, updated content of the file, including line numbers:\n\n` +
 											`<final_file_content path="${relPath.toPosix()}">\n${addLineNumbers(
 												finalContent || "",
@@ -1641,7 +1824,8 @@ export class Cline {
 									)
 								} else {
 									pushToolResult(
-										`Changes successfully applied to ${relPath.toPosix()}:\n\n${newProblemsMessage}`,
+										`Changes successfully applied to ${relPath.toPosix()}:\n\n${newProblemsMessage}\n` +
+											partFailHint,
 									)
 								}
 								await this.diffViewProvider.reset()
@@ -1988,6 +2172,15 @@ export class Cline {
 									pushToolResult(await this.sayAndCreateMissingParamError("read_file", "path"))
 									break
 								}
+
+								const accessAllowed = this.rooIgnoreController?.validateAccess(relPath)
+								if (!accessAllowed) {
+									await this.say("rooignore_error", relPath)
+									pushToolResult(formatResponse.toolError(formatResponse.rooIgnoreError(relPath)))
+
+									break
+								}
+
 								this.consecutiveMistakeCount = 0
 								const absolutePath = path.resolve(cwd, relPath)
 								const completeMessage = JSON.stringify({
@@ -2033,7 +2226,14 @@ export class Cline {
 								this.consecutiveMistakeCount = 0
 								const absolutePath = path.resolve(cwd, relDirPath)
 								const [files, didHitLimit] = await listFiles(absolutePath, recursive, 200)
-								const result = formatResponse.formatFilesList(absolutePath, files, didHitLimit)
+								const { showRooIgnoredFiles } = (await this.providerRef.deref()?.getState()) ?? {}
+								const result = formatResponse.formatFilesList(
+									absolutePath,
+									files,
+									didHitLimit,
+									this.rooIgnoreController,
+									showRooIgnoredFiles ?? true,
+								)
 								const completeMessage = JSON.stringify({
 									...sharedMessageProps,
 									content: result,
@@ -2074,7 +2274,10 @@ export class Cline {
 								}
 								this.consecutiveMistakeCount = 0
 								const absolutePath = path.resolve(cwd, relDirPath)
-								const result = await parseSourceCodeForDefinitionsTopLevel(absolutePath)
+								const result = await parseSourceCodeForDefinitionsTopLevel(
+									absolutePath,
+									this.rooIgnoreController,
+								)
 								const completeMessage = JSON.stringify({
 									...sharedMessageProps,
 									content: result,
@@ -2122,7 +2325,13 @@ export class Cline {
 								}
 								this.consecutiveMistakeCount = 0
 								const absolutePath = path.resolve(cwd, relDirPath)
-								const results = await regexSearchFiles(cwd, absolutePath, regex, filePattern)
+								const results = await regexSearchFiles(
+									cwd,
+									absolutePath,
+									regex,
+									filePattern,
+									this.rooIgnoreController,
+								)
 								const completeMessage = JSON.stringify({
 									...sharedMessageProps,
 									content: results,
@@ -2301,6 +2510,19 @@ export class Cline {
 									)
 									break
 								}
+
+								const ignoredFileAttemptedToAccess = this.rooIgnoreController?.validateCommand(command)
+								if (ignoredFileAttemptedToAccess) {
+									await this.say("rooignore_error", ignoredFileAttemptedToAccess)
+									pushToolResult(
+										formatResponse.toolError(
+											formatResponse.rooIgnoreError(ignoredFileAttemptedToAccess),
+										),
+									)
+
+									break
+								}
+
 								this.consecutiveMistakeCount = 0
 
 								const didApprove = await askApproval("command", command)
@@ -2554,10 +2776,7 @@ export class Cline {
 								}
 
 								// Switch the mode using shared handler
-								const provider = this.providerRef.deref()
-								if (provider) {
-									await provider.handleModeSwitch(mode_slug)
-								}
+								await this.providerRef.deref()?.handleModeSwitch(mode_slug)
 								pushToolResult(
 									`Successfully switched from ${getModeBySlug(currentMode)?.name ?? currentMode} mode to ${
 										targetMode.name
@@ -2619,19 +2838,25 @@ export class Cline {
 									break
 								}
 
+								// before switching roo mode (currently a global settings), save the current mode so we can
+								// resume the parent task (this Cline instance) later with the same mode
+								const currentMode =
+									(await this.providerRef.deref()?.getState())?.mode ?? defaultModeSlug
+								this.pausedModeSlug = currentMode
+
 								// Switch mode first, then create new task instance
-								const provider = this.providerRef.deref()
-								if (provider) {
-									await provider.handleModeSwitch(mode)
-									await provider.initClineWithTask(message)
-									pushToolResult(
-										`Successfully created new task in ${targetMode.name} mode with message: ${message}`,
-									)
-								} else {
-									pushToolResult(
-										formatResponse.toolError("Failed to create new task: provider not available"),
-									)
-								}
+								await this.providerRef.deref()?.handleModeSwitch(mode)
+								// wait for mode to actually switch in UI and in State
+								await delay(500) // delay to allow mode change to take effect before next tool is executed
+								this.providerRef
+									.deref()
+									?.log(`[subtasks] Task: ${this.taskNumber} creating new task in '${mode}' mode`)
+								await this.providerRef.deref()?.initClineWithSubTask(message)
+								pushToolResult(
+									`Successfully created new task in ${targetMode.name} mode with message: ${message}`,
+								)
+								// set the isPaused flag to true so the parent task can wait for the sub-task to finish
+								this.isPaused = true
 								break
 							}
 						} catch (error) {
@@ -2687,6 +2912,7 @@ export class Cline {
 											undefined,
 											false,
 										)
+
 										await this.ask(
 											"command",
 											removeClosingTag("command", command),
@@ -2718,6 +2944,14 @@ export class Cline {
 									if (lastMessage && lastMessage.ask !== "command") {
 										// havent sent a command message yet so first send completion_result then command
 										await this.say("completion_result", result, undefined, false)
+										telemetryService.captureTaskCompleted(this.taskId)
+										if (this.isSubTask) {
+											// tell the provider to remove the current subtask and resume the previous task in the stack
+											await this.providerRef
+												.deref()
+												?.finishSubTask(`Task complete: ${lastMessage?.text}`)
+											break
+										}
 									}
 
 									// complete command message
@@ -2735,6 +2969,14 @@ export class Cline {
 									commandResult = execCommandResult
 								} else {
 									await this.say("completion_result", result, undefined, false)
+									telemetryService.captureTaskCompleted(this.taskId)
+									if (this.isSubTask) {
+										// tell the provider to remove the current subtask and resume the previous task in the stack
+										await this.providerRef
+											.deref()
+											?.finishSubTask(`Task complete: ${lastMessage?.text}`)
+										break
+									}
 								}
 
 								// we already sent completion_result says, an empty string asks relinquishes control over button and field
@@ -2810,12 +3052,26 @@ export class Cline {
 		}
 	}
 
+	// this function checks if this Cline instance is set to pause state and wait for being resumed,
+	// this is used when a sub-task is launched and the parent task is waiting for it to finish
+	async waitForResume() {
+		// wait until isPaused is false
+		await new Promise<void>((resolve) => {
+			const interval = setInterval(() => {
+				if (!this.isPaused) {
+					clearInterval(interval)
+					resolve()
+				}
+			}, 1000) // TBD: the 1 sec should be added to the settings, also should add a timeout to prevent infinit wait
+		})
+	}
+
 	async recursivelyMakeClineRequests(
 		userContent: UserContent,
 		includeFileDetails: boolean = false,
 	): Promise<boolean> {
 		if (this.abort) {
-			throw new Error("Roo Code instance aborted")
+			throw new Error(`Task: ${this.taskNumber} Roo Code instance aborted (#4)`)
 		}
 
 		if (this.consecutiveMistakeCount >= 3) {
@@ -2842,6 +3098,27 @@ export class Cline {
 		// get previous api req's index to check token usage and determine if we need to truncate conversation history
 		const previousApiReqIndex = findLastIndex(this.clineMessages, (m) => m.say === "api_req_started")
 
+		// in this Cline request loop, we need to check if this cline (Task) instance has been asked to wait
+		// for a sub-task (it has launched) to finish before continuing
+		if (this.isPaused) {
+			this.providerRef.deref()?.log(`[subtasks] Task: ${this.taskNumber} has paused`)
+			await this.waitForResume()
+			this.providerRef.deref()?.log(`[subtasks] Task: ${this.taskNumber} has resumed`)
+			// waiting for resume is done, resume the task mode
+			const currentMode = (await this.providerRef.deref()?.getState())?.mode ?? defaultModeSlug
+			if (currentMode !== this.pausedModeSlug) {
+				// the mode has changed, we need to switch back to the paused mode
+				await this.providerRef.deref()?.handleModeSwitch(this.pausedModeSlug)
+				// wait for mode to actually switch in UI and in State
+				await delay(500) // delay to allow mode change to take effect before next tool is executed
+				this.providerRef
+					.deref()
+					?.log(
+						`[subtasks] Task: ${this.taskNumber} has switched back to mode: '${this.pausedModeSlug}' from mode: '${currentMode}'`,
+					)
+			}
+		}
+
 		// getting verbose details is an expensive operation, it uses globby to top-down build file structure of project which for large projects can take a few seconds
 		// for the best UX we show a placeholder api_req_started message with a loading spinner as this happens
 		await this.say(
@@ -2858,6 +3135,7 @@ export class Cline {
 		userContent.push({ type: "text", text: environmentDetails })
 
 		await this.addToApiConversationHistory({ role: "user", content: userContent })
+		telemetryService.captureConversationMessage(this.taskId, "user")
 
 		// since we sent off a placeholder api_req_started message to update the webview while waiting to actually start the API request (to load potential details for example), we need to update the text of that message
 		const lastApiReqIndex = findLastIndex(this.clineMessages, (m) => m.say === "api_req_started")
@@ -3031,7 +3309,7 @@ export class Cline {
 
 			// need to call here in case the stream was aborted
 			if (this.abort || this.abandoned) {
-				throw new Error("Roo Code instance aborted")
+				throw new Error(`Task: ${this.taskNumber} Roo Code instance aborted (#5)`)
 			}
 
 			this.didCompleteReadingStream = true
@@ -3059,6 +3337,7 @@ export class Cline {
 					role: "assistant",
 					content: [{ type: "text", text: assistantMessage }],
 				})
+				telemetryService.captureConversationMessage(this.taskId, "assistant")
 
 				// NOTE: this comment is here for future reference - this was a workaround for userMessageContent not getting set to true. It was due to it not recursively calling for partial blocks when didRejectTool, so it would get stuck waiting for a partial block to complete before it could continue.
 				// in case the content blocks finished
@@ -3161,13 +3440,18 @@ export class Cline {
 
 		// It could be useful for cline to know if the user went from one or no file to another between messages, so we always include this context
 		details += "\n\n# VSCode Visible Files"
-		const visibleFiles = vscode.window.visibleTextEditors
+		const visibleFilePaths = vscode.window.visibleTextEditors
 			?.map((editor) => editor.document?.uri?.fsPath)
 			.filter(Boolean)
-			.map((absolutePath) => path.relative(cwd, absolutePath).toPosix())
-			.join("\n")
-		if (visibleFiles) {
-			details += `\n${visibleFiles}`
+			.map((absolutePath) => path.relative(cwd, absolutePath))
+
+		// Filter paths through rooIgnoreController
+		const allowedVisibleFiles = this.rooIgnoreController
+			? this.rooIgnoreController.filterPaths(visibleFilePaths)
+			: visibleFilePaths.map((p) => p.toPosix()).join("\n")
+
+		if (allowedVisibleFiles) {
+			details += `\n${allowedVisibleFiles}`
 		} else {
 			details += "\n(No visible files)"
 		}
@@ -3175,15 +3459,20 @@ export class Cline {
 		details += "\n\n# VSCode Open Tabs"
 		const { maxOpenTabsContext } = (await this.providerRef.deref()?.getState()) ?? {}
 		const maxTabs = maxOpenTabsContext ?? 20
-		const openTabs = vscode.window.tabGroups.all
+		const openTabPaths = vscode.window.tabGroups.all
 			.flatMap((group) => group.tabs)
 			.map((tab) => (tab.input as vscode.TabInputText)?.uri?.fsPath)
 			.filter(Boolean)
 			.map((absolutePath) => path.relative(cwd, absolutePath).toPosix())
 			.slice(0, maxTabs)
-			.join("\n")
-		if (openTabs) {
-			details += `\n${openTabs}`
+
+		// Filter paths through rooIgnoreController
+		const allowedOpenTabs = this.rooIgnoreController
+			? this.rooIgnoreController.filterPaths(openTabPaths)
+			: openTabPaths.map((p) => p.toPosix()).join("\n")
+
+		if (allowedOpenTabs) {
+			details += `\n${allowedOpenTabs}`
 		} else {
 			details += "\n(No open tabs)"
 		}
@@ -3233,7 +3522,7 @@ export class Cline {
 			terminalDetails += "\n\n# Actively Running Terminals"
 			for (const busyTerminal of busyTerminals) {
 				terminalDetails += `\n## Original command: \`${busyTerminal.lastCommand}\``
-				const newOutput = this.terminalManager.getUnretrievedOutput(busyTerminal.id)
+				const newOutput = this.terminalManager.readLine(busyTerminal.id)
 				if (newOutput) {
 					terminalDetails += `\n### New Output\n${newOutput}`
 				} else {
@@ -3245,7 +3534,7 @@ export class Cline {
 		if (inactiveTerminals.length > 0) {
 			const inactiveTerminalOutputs = new Map<number, string>()
 			for (const inactiveTerminal of inactiveTerminals) {
-				const newOutput = this.terminalManager.getUnretrievedOutput(inactiveTerminal.id)
+				const newOutput = this.terminalManager.readLine(inactiveTerminal.id)
 				if (newOutput) {
 					inactiveTerminalOutputs.set(inactiveTerminal.id, newOutput)
 				}
@@ -3342,7 +3631,14 @@ export class Cline {
 				details += "(Desktop files not shown automatically. Use list_files to explore if needed.)"
 			} else {
 				const [files, didHitLimit] = await listFiles(cwd, true, 200)
-				const result = formatResponse.formatFilesList(cwd, files, didHitLimit)
+				const { showRooIgnoredFiles } = (await this.providerRef.deref()?.getState()) ?? {}
+				const result = formatResponse.formatFilesList(
+					cwd,
+					files,
+					didHitLimit,
+					this.rooIgnoreController,
+					showRooIgnoredFiles,
+				)
 				details += result
 			}
 		}
@@ -3352,9 +3648,13 @@ export class Cline {
 
 	// Checkpoints
 
-	private async initializeCheckpoints() {
+	private getCheckpointService() {
 		if (!this.enableCheckpoints) {
-			return
+			return undefined
+		}
+
+		if (this.checkpointService) {
+			return this.checkpointService
 		}
 
 		const log = (message: string) => {
@@ -3368,47 +3668,49 @@ export class Cline {
 		}
 
 		try {
-			if (this.checkpointService) {
-				log("[Cline#initializeCheckpoints] checkpointService already initialized")
-				return
-			}
-
 			const workspaceDir = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath).at(0)
 
 			if (!workspaceDir) {
 				log("[Cline#initializeCheckpoints] workspace folder not found, disabling checkpoints")
 				this.enableCheckpoints = false
-				return
+				return undefined
 			}
 
-			const shadowDir = this.providerRef.deref()?.context.globalStorageUri.fsPath
+			const globalStorageDir = this.providerRef.deref()?.context.globalStorageUri.fsPath
 
-			if (!shadowDir) {
-				log("[Cline#initializeCheckpoints] shadowDir not found, disabling checkpoints")
+			if (!globalStorageDir) {
+				log("[Cline#initializeCheckpoints] globalStorageDir not found, disabling checkpoints")
 				this.enableCheckpoints = false
-				return
+				return undefined
 			}
 
-			const service = await ShadowCheckpointService.create({ taskId: this.taskId, workspaceDir, shadowDir, log })
-
-			if (!service) {
-				log("[Cline#initializeCheckpoints] failed to create checkpoint service, disabling checkpoints")
-				this.enableCheckpoints = false
-				return
+			const options: CheckpointServiceOptions = {
+				taskId: this.taskId,
+				workspaceDir,
+				shadowDir: globalStorageDir,
+				log,
 			}
 
-			service.on("initialize", ({ workspaceDir, created, duration }) => {
+			// Only `task` is supported at the moment until we figure out how
+			// to fully isolate the `workspace` variant.
+			// const service =
+			// 	this.checkpointStorage === "task"
+			// 		? RepoPerTaskCheckpointService.create(options)
+			// 		: RepoPerWorkspaceCheckpointService.create(options)
+
+			const service = RepoPerTaskCheckpointService.create(options)
+
+			service.on("initialize", () => {
 				try {
-					if (created) {
-						log(`[Cline#initializeCheckpoints] created new shadow repo (${workspaceDir}) in ${duration}ms`)
-					} else {
-						log(
-							`[Cline#initializeCheckpoints] found existing shadow repo (${workspaceDir}) in ${duration}ms`,
-						)
-					}
+					const isCheckpointNeeded =
+						typeof this.clineMessages.find(({ say }) => say === "checkpoint_saved") === "undefined"
 
 					this.checkpointService = service
-					this.checkpointSave()
+
+					if (isCheckpointNeeded) {
+						log("[Cline#initializeCheckpoints] no checkpoints found, saving initial checkpoint")
+						this.checkpointSave()
+					}
 				} catch (err) {
 					log("[Cline#initializeCheckpoints] caught error in on('initialize'), disabling checkpoints")
 					this.enableCheckpoints = false
@@ -3417,41 +3719,77 @@ export class Cline {
 
 			service.on("checkpoint", ({ isFirst, fromHash: from, toHash: to }) => {
 				try {
-					log(`[Cline#initializeCheckpoints] ${isFirst ? "initial" : "incremental"} checkpoint saved: ${to}`)
 					this.providerRef.deref()?.postMessageToWebview({ type: "currentCheckpointUpdated", text: to })
 
-					this.say("checkpoint_saved", to, undefined, undefined, { isFirst, from, to }).catch((e) =>
-						console.error("Error saving checkpoint message:", e),
-					)
+					this.say("checkpoint_saved", to, undefined, undefined, { isFirst, from, to }).catch((err) => {
+						log("[Cline#initializeCheckpoints] caught unexpected error in say('checkpoint_saved')")
+						console.error(err)
+					})
 				} catch (err) {
-					log("[Cline#initializeCheckpoints] caught error in on('checkpoint'), disabling checkpoints")
+					log(
+						"[Cline#initializeCheckpoints] caught unexpected error in on('checkpoint'), disabling checkpoints",
+					)
+					console.error(err)
 					this.enableCheckpoints = false
 				}
 			})
 
-			service.initShadowGit()
+			service.initShadowGit().catch((err) => {
+				log("[Cline#initializeCheckpoints] caught unexpected error in initShadowGit, disabling checkpoints")
+				console.error(err)
+				this.enableCheckpoints = false
+			})
+
+			return service
 		} catch (err) {
-			log("[Cline#initializeCheckpoints] caught error in initializeCheckpoints(), disabling checkpoints")
+			log("[Cline#initializeCheckpoints] caught unexpected error, disabling checkpoints")
 			this.enableCheckpoints = false
+			return undefined
+		}
+	}
+
+	private async getInitializedCheckpointService({
+		interval = 250,
+		timeout = 15_000,
+	}: { interval?: number; timeout?: number } = {}) {
+		const service = this.getCheckpointService()
+
+		if (!service || service.isInitialized) {
+			return service
+		}
+
+		try {
+			await pWaitFor(
+				() => {
+					console.log("[Cline#getCheckpointService] waiting for service to initialize")
+					return service.isInitialized
+				},
+				{ interval, timeout },
+			)
+			return service
+		} catch (err) {
+			return undefined
 		}
 	}
 
 	public async checkpointDiff({
 		ts,
+		previousCommitHash,
 		commitHash,
 		mode,
 	}: {
 		ts: number
+		previousCommitHash?: string
 		commitHash: string
 		mode: "full" | "checkpoint"
 	}) {
-		if (!this.checkpointService || !this.enableCheckpoints) {
+		const service = await this.getInitializedCheckpointService()
+
+		if (!service) {
 			return
 		}
 
-		let previousCommitHash = undefined
-
-		if (mode === "checkpoint") {
+		if (!previousCommitHash && mode === "checkpoint") {
 			const previousCheckpoint = this.clineMessages
 				.filter(({ say }) => say === "checkpoint_saved")
 				.sort((a, b) => b.ts - a.ts)
@@ -3461,7 +3799,7 @@ export class Cline {
 		}
 
 		try {
-			const changes = await this.checkpointService.getDiff({ from: previousCommitHash, to: commitHash })
+			const changes = await service.getDiff({ from: previousCommitHash, to: commitHash })
 
 			if (!changes?.length) {
 				vscode.window.showInformationMessage("No changes found.")
@@ -3488,12 +3826,25 @@ export class Cline {
 	}
 
 	public checkpointSave() {
-		if (!this.checkpointService || !this.enableCheckpoints) {
+		const service = this.getCheckpointService()
+
+		if (!service) {
+			return
+		}
+
+		if (!service.isInitialized) {
+			this.providerRef
+				.deref()
+				?.log("[checkpointSave] checkpoints didn't initialize in time, disabling checkpoints for this task")
+			this.enableCheckpoints = false
 			return
 		}
 
 		// Start the checkpoint process in the background.
-		this.checkpointService.saveCheckpoint(`Task: ${this.taskId}, Time: ${Date.now()}`)
+		service.saveCheckpoint(`Task: ${this.taskId}, Time: ${Date.now()}`).catch((err) => {
+			console.error("[Cline#checkpointSave] caught unexpected error, disabling checkpoints", err)
+			this.enableCheckpoints = false
+		})
 	}
 
 	public async checkpointRestore({
@@ -3505,7 +3856,9 @@ export class Cline {
 		commitHash: string
 		mode: "preview" | "restore"
 	}) {
-		if (!this.checkpointService || !this.enableCheckpoints) {
+		const service = await this.getInitializedCheckpointService()
+
+		if (!service) {
 			return
 		}
 
@@ -3516,7 +3869,7 @@ export class Cline {
 		}
 
 		try {
-			await this.checkpointService.restoreCheckpoint(commitHash)
+			await service.restoreCheckpoint(commitHash)
 
 			await this.providerRef.deref()?.postMessageToWebview({ type: "currentCheckpointUpdated", text: commitHash })
 

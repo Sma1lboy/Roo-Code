@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { useEvent } from "react-use"
 
 import { ExtensionMessage } from "../../src/shared/ExtensionMessage"
+import { ShowHumanRelayDialogMessage } from "../../src/shared/ExtensionMessage"
 
 import { vscode } from "./utils/vscode"
+import { telemetryClient } from "./utils/TelemetryClient"
 import { ExtensionStateContextProvider, useExtensionState } from "./context/ExtensionStateContext"
 import ChatView from "./components/chat/ChatView"
 import HistoryView from "./components/history/HistoryView"
@@ -11,6 +13,7 @@ import SettingsView, { SettingsViewRef } from "./components/settings/SettingsVie
 import WelcomeView from "./components/welcome/WelcomeView"
 import McpView from "./components/mcp/McpView"
 import PromptsView from "./components/prompts/PromptsView"
+import { HumanRelayDialog } from "./components/human-relay/HumanRelayDialog"
 
 type Tab = "settings" | "history" | "mcp" | "prompts" | "chat"
 
@@ -21,12 +24,23 @@ const tabsByMessageAction: Partial<Record<NonNullable<ExtensionMessage["action"]
 	mcpButtonClicked: "mcp",
 	historyButtonClicked: "history",
 }
-
 const App = () => {
-	const { didHydrateState, showWelcome, shouldShowAnnouncement } = useExtensionState()
+	const { didHydrateState, showWelcome, shouldShowAnnouncement, telemetrySetting, telemetryKey, machineId } =
+		useExtensionState()
 	const [showAnnouncement, setShowAnnouncement] = useState(false)
 	const [tab, setTab] = useState<Tab>("chat")
 	const settingsRef = useRef<SettingsViewRef>(null)
+
+	// Human Relay Dialog Status
+	const [humanRelayDialogState, setHumanRelayDialogState] = useState<{
+		isOpen: boolean
+		requestId: string
+		promptText: string
+	}>({
+		isOpen: false,
+		requestId: "",
+		promptText: "",
+	})
 
 	const switchTab = useCallback((newTab: Tab) => {
 		if (settingsRef.current?.checkUnsaveChanges) {
@@ -47,9 +61,35 @@ const App = () => {
 					switchTab(newTab)
 				}
 			}
+			const mes: ShowHumanRelayDialogMessage = message as ShowHumanRelayDialogMessage
+			// Processing displays human relay dialog messages
+			if (mes.type === "showHumanRelayDialog" && mes.requestId && mes.promptText) {
+				setHumanRelayDialogState({
+					isOpen: true,
+					requestId: mes.requestId,
+					promptText: mes.promptText,
+				})
+			}
 		},
 		[switchTab],
 	)
+
+	// Processing Human Relay Dialog Submission
+	const handleHumanRelaySubmit = (requestId: string, text: string) => {
+		vscode.postMessage({
+			type: "humanRelayResponse",
+			requestId,
+			text,
+		})
+	}
+
+	// Handle Human Relay dialog box cancel
+	const handleHumanRelayCancel = (requestId: string) => {
+		vscode.postMessage({
+			type: "humanRelayCancel",
+			requestId,
+		})
+	}
 
 	useEvent("message", onMessage)
 
@@ -59,6 +99,17 @@ const App = () => {
 			vscode.postMessage({ type: "didShowAnnouncement" })
 		}
 	}, [shouldShowAnnouncement])
+
+	useEffect(() => {
+		if (didHydrateState) {
+			telemetryClient.updateTelemetryState(telemetrySetting, telemetryKey, machineId)
+		}
+	}, [telemetrySetting, telemetryKey, machineId, didHydrateState])
+
+	// Tell Extension that we are ready to receive messages
+	useEffect(() => {
+		vscode.postMessage({ type: "webviewDidLaunch" })
+	}, [])
 
 	if (!didHydrateState) {
 		return null
@@ -79,6 +130,15 @@ const App = () => {
 				showAnnouncement={showAnnouncement}
 				hideAnnouncement={() => setShowAnnouncement(false)}
 				showHistoryView={() => switchTab("history")}
+			/>
+			{/* Human Relay Dialog */}
+			<HumanRelayDialog
+				isOpen={humanRelayDialogState.isOpen}
+				requestId={humanRelayDialogState.requestId}
+				promptText={humanRelayDialogState.promptText}
+				onClose={() => setHumanRelayDialogState((prev) => ({ ...prev, isOpen: false }))}
+				onSubmit={handleHumanRelaySubmit}
+				onCancel={handleHumanRelayCancel}
 			/>
 		</>
 	)

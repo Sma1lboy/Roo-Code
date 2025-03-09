@@ -1,6 +1,9 @@
+// npx jest src/components/settings/__tests__/ApiOptions.test.ts
+
 import { render, screen } from "@testing-library/react"
-import ApiOptions from "../ApiOptions"
+
 import { ExtensionStateContextProvider } from "../../../context/ExtensionStateContext"
+import ApiOptions from "../ApiOptions"
 
 // Mock VSCode components
 jest.mock("@vscode/webview-ui-toolkit/react", () => ({
@@ -13,6 +16,7 @@ jest.mock("@vscode/webview-ui-toolkit/react", () => ({
 	VSCodeLink: ({ children, href }: any) => <a href={href}>{children}</a>,
 	VSCodeRadio: ({ children, value, checked }: any) => <input type="radio" value={value} checked={checked} />,
 	VSCodeRadioGroup: ({ children }: any) => <div>{children}</div>,
+	VSCodeButton: ({ children }: any) => <div>{children}</div>,
 }))
 
 // Mock other components
@@ -29,6 +33,31 @@ jest.mock("vscrui", () => ({
 		</label>
 	),
 	Pane: ({ children }: any) => <div>{children}</div>,
+}))
+
+// Mock @shadcn/ui components
+jest.mock("@/components/ui", () => ({
+	Select: ({ children, value, onValueChange }: any) => (
+		<div className="select-mock">
+			<select value={value} onChange={(e) => onValueChange && onValueChange(e.target.value)}>
+				{children}
+			</select>
+		</div>
+	),
+	SelectTrigger: ({ children }: any) => <div className="select-trigger-mock">{children}</div>,
+	SelectValue: ({ children }: any) => <div className="select-value-mock">{children}</div>,
+	SelectContent: ({ children }: any) => <div className="select-content-mock">{children}</div>,
+	SelectGroup: ({ children }: any) => <div className="select-group-mock">{children}</div>,
+	SelectItem: ({ children, value }: any) => (
+		<option value={value} className="select-item-mock">
+			{children}
+		</option>
+	),
+	Button: ({ children, onClick }: any) => (
+		<button onClick={onClick} className="button-mock">
+			{children}
+		</button>
+	),
 }))
 
 jest.mock("../TemperatureControl", () => ({
