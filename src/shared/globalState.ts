@@ -13,6 +13,7 @@ export const SECRET_KEYS = [
 	"mistralApiKey",
 	"unboundApiKey",
 	"requestyApiKey",
+	"tabbyApiKey",
 ] as const
 
 // Derive the type from the array - creates a union of string literals
@@ -49,6 +50,8 @@ export const GLOBAL_STATE_KEYS = [
 	"ollamaBaseUrl",
 	"lmStudioModelId",
 	"lmStudioBaseUrl",
+	"tabbyModelId",
+	"tabbyBaseUrl",
 	"anthropicBaseUrl",
 	"modelMaxThinkingTokens",
 	"azureApiVersion",
