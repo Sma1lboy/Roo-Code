@@ -1,16 +1,9 @@
 import * as vscode from "vscode"
-import { SingleCompletionHandler } from ".."
-import { BaseProvider } from "./base-provider"
-import { ApiHandlerOptions, ModelInfo } from "../../shared/api"
-import { ApiStreamChunk } from "../transform/stream"
-import OpenAI from "openai"
-import Anthropic from "@anthropic-ai/sdk/index.mjs"
-import { convertToOpenAiMessages } from "../transform/openai-format"
 import { OpenAiHandler, OpenAiHandlerOptions } from "./openai"
 
 export interface TabbyConfig {
 	endpoint: string
-	apiKey?: any
+	apiKey?: string
 }
 
 const TABBY_EXTENSION_ID = "TabbyML.vscode-tabby"
@@ -50,8 +43,8 @@ export async function fetchLatestTabbyConfig(): Promise<TabbyConfig> {
 			tabbyApi = await tabbyExtension.activate()
 		}
 
-		if (tabbyApi && typeof tabbyApi.canGetToken === "function") {
-			const token = (await tabbyApi.canGetToken("rooveterinaryinc.roo - cline")).token
+		if (tabbyApi && typeof tabbyApi.tryReadAuthenticationToken === "function") {
+			const token = (await tabbyApi.tryReadAuthenticationToken()).token
 			return {
 				endpoint,
 				apiKey: token,
