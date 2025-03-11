@@ -53,7 +53,7 @@ import { Cline, ClineOptions } from "../Cline"
 import { openMention } from "../mentions"
 import { getNonce } from "./getNonce"
 import { getUri } from "./getUri"
-import { getTabbyModels, fetchLatestTabbyConfig } from "../../api/providers/tabbyml"
+import { getTabbyModels, fetchLatestTabbyConfig, TabbyConfig } from "../../api/providers/tabbyml"
 import { telemetryService } from "../../services/telemetry/TelemetryService"
 import { TelemetrySetting } from "../../shared/TelemetrySetting"
 
@@ -1098,7 +1098,13 @@ export class ClineProvider implements vscode.WebviewViewProvider {
 						this.postMessageToWebview({ type: "lmStudioModels", lmStudioModels })
 						break
 					case "requestTabbyModels":
-						const tabbyConfig = await fetchLatestTabbyConfig()
+						let tabbyConfig: TabbyConfig = {
+							endpoint: message.apiConfiguration?.tabbyBaseUrl || "",
+							apiKey: message.apiConfiguration?.tabbyApiKey,
+						}
+						if (tabbyConfig.apiKey === undefined) {
+							tabbyConfig = await fetchLatestTabbyConfig()
+						}
 						const tabbyModels = await getTabbyModels(tabbyConfig.endpoint, tabbyConfig.apiKey)
 						this.postMessageToWebview({
 							type: "tabbyModels",
@@ -1108,7 +1114,6 @@ export class ClineProvider implements vscode.WebviewViewProvider {
 								apiKey: tabbyConfig.apiKey,
 							},
 						})
-
 						break
 					case "requestVsCodeLmModels":
 						const vsCodeLmModels = await getVsCodeLmModels()

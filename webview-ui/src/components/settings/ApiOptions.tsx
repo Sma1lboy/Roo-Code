@@ -969,41 +969,75 @@ const ApiOptions = ({
 					<label htmlFor="vscode-lm-model">
 						<span className="font-medium">Language Model</span>
 					</label>
-					{tabbyModels.length > 0 ? (
-						<Dropdown
-							id="tabbyml-model"
-							value={apiConfiguration?.tabbyModelId}
-							onChange={handleInputChange("tabbyModelId", (e) => {
-								const valueStr = (e as DropdownOption)?.value
-								return valueStr ? valueStr : ""
-							})}
-							style={{ width: "100%" }}
-							options={[
-								{ value: "", label: "Select a model..." },
-								...tabbyModels.map((model) => ({
-									value: model,
-									label: model,
-								})),
-							]}
-						/>
-					) : (
-						<div
+					<div
+						style={{
+							display: "flex",
+							justifyContent: "space-between",
+							alignItems: "center",
+							marginBottom: "10px",
+						}}>
+						{tabbyModels.length > 0 ? (
+							<Dropdown
+								id="tabbyml-model"
+								value={apiConfiguration?.tabbyModelId}
+								onChange={handleInputChange("tabbyModelId", (e) => {
+									const valueStr = (e as DropdownOption)?.value
+									return valueStr ? valueStr : ""
+								})}
+								style={{ width: "100%" }}
+								options={[
+									{ value: "", label: "Select a model..." },
+									...tabbyModels.map((model) => ({
+										value: model,
+										label: model,
+									})),
+								]}
+							/>
+						) : (
+							<div
+								style={{
+									padding: "10px",
+									background: "var(--vscode-editorWarning-background)",
+									color: "var(--vscode-editorWarning-foreground)",
+									border: "1px solid var(--vscode-editorWarning-border)",
+									borderRadius: "4px",
+									marginBottom: "10px",
+									display: "flex",
+									alignItems: "center",
+									fontSize: "13px",
+								}}>
+								<i
+									className="codicon codicon-warning"
+									style={{ fontSize: "14px", marginRight: "8px" }}
+								/>
+								Tabby models waiting to load...
+							</div>
+						)}
+					</div>
+					<button
+						type="button"
+						className="button-secondary"
+						style={{
+							padding: "4px 8px",
+							borderRadius: "4px",
+							fontSize: "12px",
+							display: "flex",
+							alignItems: "center",
+							justifyContent: "center",
+						}}
+						onClick={() => {
+							vscode.postMessage({ type: "requestTabbyModels" })
+						}}>
+						<i
+							className="codicon codicon-refresh"
 							style={{
-								padding: "10px",
-								background: "var(--vscode-editorWarning-background)",
-								color: "var(--vscode-editorWarning-foreground)",
-								border: "1px solid var(--vscode-editorWarning-border)",
-								borderRadius: "4px",
-								marginBottom: "10px",
-								display: "flex",
-								alignItems: "center",
-								fontSize: "13px",
-							}}>
-							<i className="codicon codicon-warning" style={{ fontSize: "14px", marginRight: "8px" }} />
-							Tabby models waiting to load...
-						</div>
-					)}
-
+								marginRight: "4px",
+								transition: "transform 0.3s ease",
+								fontSize: "11px",
+							}}
+						/>
+						Reconnect
+					</button>
 					<p
 						style={{
 							fontSize: "12px",
@@ -1030,7 +1064,6 @@ const ApiOptions = ({
 					</p>
 				</div>
 			)}
-
 			{selectedProvider === "lmstudio" && (
 				<>
 					<VSCodeTextField
