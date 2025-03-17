@@ -126,8 +126,6 @@ const ApiOptions = ({
 	)
 	const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false)
 
-	console.log("tabby", apiConfiguration.tabbyApiKey)
-	console.log("tabby models", apiConfiguration.tabbyModelId)
 	const noTransform = <T,>(value: T) => value
 	const inputEventTransform = <E,>(event: E) => (event as { target: HTMLInputElement })?.target?.value as any
 	const dropdownEventTransform = <T,>(event: DropdownOption | string | undefined) =>
