@@ -42,6 +42,7 @@ export interface ExtensionMessage {
 		| "vsCodeLmModels"
 		| "vsCodeLmApiAvailable"
 		| "requestVsCodeLmModels"
+		| "tabbyModels"
 		| "updatePrompt"
 		| "systemPrompt"
 		| "autoApprovalEnabled"
@@ -68,6 +69,7 @@ export interface ExtensionMessage {
 	ollamaModels?: string[]
 	lmStudioModels?: string[]
 	vsCodeLmModels?: { vendor?: string; family?: string; version?: string; id?: string }[]
+	tabbyModels?: string[]
 	filePaths?: string[]
 	openedTabs?: Array<{
 		label: string
@@ -86,6 +88,7 @@ export interface ExtensionMessage {
 	mode?: Mode
 	customMode?: ModeConfig
 	slug?: string
+	tabbyConfig?: { endpoint: string; apiKey?: string }
 	success?: boolean
 	values?: Record<string, any>
 	requestId?: string

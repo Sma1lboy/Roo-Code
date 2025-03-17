@@ -132,6 +132,7 @@ export type SecretKey =
 	| "mistralApiKey"
 	| "unboundApiKey"
 	| "requestyApiKey"
+	| "tabbyApiKey"
 
 export type GlobalStateKey =
 	| "apiProvider"
@@ -215,6 +216,8 @@ export type GlobalStateKey =
 	| "browserToolEnabled"
 	| "lmStudioSpeculativeDecodingEnabled"
 	| "lmStudioDraftModelId"
+	| "tabbyBaseUrl"
+	| "tabbyModelId"
 	| "telemetrySetting"
 	| "showRooIgnoredFiles"
 	| "remoteBrowserEnabled"

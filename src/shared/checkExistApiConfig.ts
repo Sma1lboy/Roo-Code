@@ -14,6 +14,7 @@ export function checkExistKey(config: ApiConfiguration | undefined) {
 		config.ollamaModelId,
 		config.lmStudioModelId,
 		config.vsCodeLmModelSelector,
+		config.tabbyModelId,
 	].some((value) => value !== undefined)
 
 	return hasSecretKey || hasOtherConfig
