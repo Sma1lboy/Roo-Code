@@ -1,11 +1,21 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react"
+import { useAppTranslation } from "@/i18n/TranslationContext"
 import { Button as VSCodeButton } from "vscrui"
-import { CheckCheck, SquareMousePointer, Webhook, GitBranch, Bell, Cog, FlaskConical } from "lucide-react"
+import {
+	CheckCheck,
+	SquareMousePointer,
+	Webhook,
+	GitBranch,
+	Bell,
+	Cog,
+	FlaskConical,
+	AlertTriangle,
+} from "lucide-react"
 
-import { ApiConfiguration } from "../../../../src/shared/api"
+import { Database } from "lucide-react"
 import { ExperimentId } from "../../../../src/shared/experiments"
-import { TERMINAL_OUTPUT_LIMIT } from "../../../../src/shared/terminal"
 import { TelemetrySetting } from "../../../../src/shared/TelemetrySetting"
+import { ApiConfiguration } from "../../../../src/shared/api"
 
 import { vscode } from "@/utils/vscode"
 import { ExtensionStateContextType, useExtensionState } from "@/context/ExtensionStateContext"
@@ -22,6 +32,7 @@ import {
 	Button,
 } from "@/components/ui"
 
+import { Tab, TabContent, TabHeader } from "../common/Tab"
 import { SetCachedStateField, SetExperimentEnabled } from "./types"
 import { SectionHeader } from "./SectionHeader"
 import ApiConfigManager from "./ApiConfigManager"
@@ -30,6 +41,7 @@ import { AutoApproveSettings } from "./AutoApproveSettings"
 import { BrowserSettings } from "./BrowserSettings"
 import { CheckpointSettings } from "./CheckpointSettings"
 import { NotificationSettings } from "./NotificationSettings"
+import { ContextManagementSettings } from "./ContextManagementSettings"
 import { AdvancedSettings } from "./AdvancedSettings"
 import { SettingsFooter } from "./SettingsFooter"
 import { Section } from "./Section"
@@ -44,6 +56,7 @@ type SettingsViewProps = {
 }
 
 const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone }, ref) => {
+	const { t } = useAppTranslation()
 	const extensionState = useExtensionState()
 	const { currentApiConfigName, listApiConfigMeta, uriScheme, version } = extensionState
 
@@ -59,10 +72,12 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone },
 	const {
 		alwaysAllowReadOnly,
 		allowedCommands,
+		language,
 		alwaysAllowBrowser,
 		alwaysAllowExecute,
 		alwaysAllowMcp,
 		alwaysAllowModeSwitch,
+		alwaysAllowSubtasks,
 		alwaysAllowWrite,
 		alwaysApproveResubmit,
 		browserToolEnabled,
@@ -73,16 +88,19 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone },
 		experiments,
 		fuzzyMatchThreshold,
 		maxOpenTabsContext,
+		maxWorkspaceFiles,
 		mcpEnabled,
 		rateLimitSeconds,
 		requestDelaySeconds,
+		remoteBrowserHost,
 		screenshotQuality,
 		soundEnabled,
 		soundVolume,
 		telemetrySetting,
-		terminalOutputLimit,
+		terminalOutputLineLimit,
 		writeDelayMs,
 		showRooIgnoredFiles,
+		remoteBrowserEnabled,
 	} = cachedState
 
 	// Make sure apiConfiguration is initialized and managed by SettingsView.
@@ -158,6 +176,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone },
 
 	const handleSubmit = () => {
 		if (isSettingValid) {
+			vscode.postMessage({ type: "language", text: language })
 			vscode.postMessage({ type: "alwaysAllowReadOnly", bool: alwaysAllowReadOnly })
 			vscode.postMessage({ type: "alwaysAllowWrite", bool: alwaysAllowWrite })
 			vscode.postMessage({ type: "alwaysAllowExecute", bool: alwaysAllowExecute })
@@ -171,19 +190,23 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone },
 			vscode.postMessage({ type: "enableCheckpoints", bool: enableCheckpoints })
 			vscode.postMessage({ type: "checkpointStorage", text: checkpointStorage })
 			vscode.postMessage({ type: "browserViewportSize", text: browserViewportSize })
+			vscode.postMessage({ type: "remoteBrowserHost", text: remoteBrowserHost })
+			vscode.postMessage({ type: "remoteBrowserEnabled", bool: remoteBrowserEnabled })
 			vscode.postMessage({ type: "fuzzyMatchThreshold", value: fuzzyMatchThreshold ?? 1.0 })
 			vscode.postMessage({ type: "writeDelayMs", value: writeDelayMs })
 			vscode.postMessage({ type: "screenshotQuality", value: screenshotQuality ?? 75 })
-			vscode.postMessage({ type: "terminalOutputLimit", value: terminalOutputLimit ?? TERMINAL_OUTPUT_LIMIT })
+			vscode.postMessage({ type: "terminalOutputLineLimit", value: terminalOutputLineLimit ?? 500 })
 			vscode.postMessage({ type: "mcpEnabled", bool: mcpEnabled })
 			vscode.postMessage({ type: "alwaysApproveResubmit", bool: alwaysApproveResubmit })
 			vscode.postMessage({ type: "requestDelaySeconds", value: requestDelaySeconds })
 			vscode.postMessage({ type: "rateLimitSeconds", value: rateLimitSeconds })
 			vscode.postMessage({ type: "maxOpenTabsContext", value: maxOpenTabsContext })
+			vscode.postMessage({ type: "maxWorkspaceFiles", value: maxWorkspaceFiles ?? 200 })
 			vscode.postMessage({ type: "showRooIgnoredFiles", bool: showRooIgnoredFiles })
 			vscode.postMessage({ type: "currentApiConfigName", text: currentApiConfigName })
 			vscode.postMessage({ type: "updateExperimental", values: experiments })
 			vscode.postMessage({ type: "alwaysAllowModeSwitch", bool: alwaysAllowModeSwitch })
+			vscode.postMessage({ type: "alwaysAllowSubtasks", bool: alwaysAllowSubtasks })
 			vscode.postMessage({ type: "upsertApiConfiguration", text: currentApiConfigName, apiConfiguration })
 			vscode.postMessage({ type: "telemetrySetting", text: telemetrySetting })
 			setChangeDetected(false)
@@ -215,6 +238,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone },
 	const browserRef = useRef<HTMLDivElement>(null)
 	const checkpointRef = useRef<HTMLDivElement>(null)
 	const notificationsRef = useRef<HTMLDivElement>(null)
+	const contextRef = useRef<HTMLDivElement>(null)
 	const advancedRef = useRef<HTMLDivElement>(null)
 	const experimentalRef = useRef<HTMLDivElement>(null)
 
@@ -227,10 +251,20 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone },
 			{ id: "browser", icon: SquareMousePointer, ref: browserRef },
 			{ id: "checkpoint", icon: GitBranch, ref: checkpointRef },
 			{ id: "notifications", icon: Bell, ref: notificationsRef },
+			{ id: "context", icon: Database, ref: contextRef },
 			{ id: "advanced", icon: Cog, ref: advancedRef },
 			{ id: "experimental", icon: FlaskConical, ref: experimentalRef },
 		],
-		[providersRef, autoApproveRef, browserRef, checkpointRef, notificationsRef, advancedRef, experimentalRef],
+		[
+			providersRef,
+			autoApproveRef,
+			browserRef,
+			checkpointRef,
+			notificationsRef,
+			contextRef,
+			advancedRef,
+			experimentalRef,
+		],
 	)
 
 	const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
@@ -240,6 +274,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone },
 			{ ref: browserRef, id: "browser" },
 			{ ref: checkpointRef, id: "checkpoint" },
 			{ ref: notificationsRef, id: "notifications" },
+			{ ref: contextRef, id: "context" },
 			{ ref: advancedRef, id: "advanced" },
 			{ ref: experimentalRef, id: "experimental" },
 		]
@@ -261,58 +296,53 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone },
 	const scrollToSection = (ref: React.RefObject<HTMLDivElement>) => ref.current?.scrollIntoView()
 
 	return (
-		<div className="fixed inset-0 flex flex-col overflow-hidden">
-			<div className="px-5 py-2.5 border-b border-vscode-panel-border">
-				<div className="flex flex-col">
-					<div className="flex justify-between items-center">
-						<div className="flex items-center gap-2">
-							<h3 className="text-vscode-foreground m-0">Settings</h3>
-							<div className="hidden [@media(min-width:400px)]:flex items-center">
-								{sections.map(({ id, icon: Icon, ref }) => (
-									<Button
-										key={id}
-										variant="ghost"
-										onClick={() => scrollToSection(ref)}
-										className={cn("w-6 h-6", activeSection === id ? "opacity-100" : "opacity-40")}>
-										<Icon />
-									</Button>
-								))}
-							</div>
-						</div>
-						<div className="flex gap-2">
-							<VSCodeButton
-								appearance={isSettingValid ? "primary" : "secondary"}
-								className={!isSettingValid ? "!border-vscode-errorForeground" : ""}
-								title={
-									!isSettingValid
-										? errorMessage
-										: isChangeDetected
-											? "Save changes"
-											: "Nothing changed"
-								}
-								onClick={handleSubmit}
-								disabled={!isChangeDetected || !isSettingValid}>
-								Save
-							</VSCodeButton>
-							<VSCodeButton
-								appearance="secondary"
-								title="Discard unsaved changes and close settings panel"
-								onClick={() => checkUnsaveChanges(onDone)}>
-								Done
-							</VSCodeButton>
-						</div>
+		<Tab>
+			<TabHeader className="flex justify-between items-center gap-2">
+				<div className="flex items-center gap-2">
+					<h3 className="text-vscode-foreground m-0">{t("settings:header.title")}</h3>
+					<div className="hidden [@media(min-width:400px)]:flex items-center">
+						{sections.map(({ id, icon: Icon, ref }) => (
+							<Button
+								key={id}
+								variant="ghost"
+								onClick={() => scrollToSection(ref)}
+								className={cn("w-6 h-6", activeSection === id ? "opacity-100" : "opacity-40")}>
+								<Icon />
+							</Button>
+						))}
 					</div>
 				</div>
-			</div>
+				<div className="flex gap-2">
+					<VSCodeButton
+						appearance={isSettingValid ? "primary" : "secondary"}
+						className={!isSettingValid ? "!border-vscode-errorForeground" : ""}
+						title={
+							!isSettingValid
+								? errorMessage
+								: isChangeDetected
+									? t("settings:header.saveButtonTooltip")
+									: t("settings:header.nothingChangedTooltip")
+						}
+						onClick={handleSubmit}
+						disabled={!isChangeDetected || !isSettingValid}
+						data-testid="save-button">
+						{t("settings:common.save")}
+					</VSCodeButton>
+					<VSCodeButton
+						appearance="secondary"
+						title={t("settings:header.doneButtonTooltip")}
+						onClick={() => checkUnsaveChanges(onDone)}>
+						{t("settings:common.done")}
+					</VSCodeButton>
+				</div>
+			</TabHeader>
 
-			<div
-				className="flex flex-col flex-1 overflow-auto divide-y divide-vscode-sideBar-background"
-				onScroll={handleScroll}>
+			<TabContent className="p-0 divide-y divide-vscode-sideBar-background" onScroll={handleScroll}>
 				<div ref={providersRef}>
 					<SectionHeader>
 						<div className="flex items-center gap-2">
 							<Webhook className="w-4" />
-							<div>Providers</div>
+							<div>{t("settings:sections.providers")}</div>
 						</div>
 					</SectionHeader>
 
@@ -364,6 +394,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone },
 						requestDelaySeconds={requestDelaySeconds}
 						alwaysAllowMcp={alwaysAllowMcp}
 						alwaysAllowModeSwitch={alwaysAllowModeSwitch}
+						alwaysAllowSubtasks={alwaysAllowSubtasks}
 						alwaysAllowExecute={alwaysAllowExecute}
 						allowedCommands={allowedCommands}
 						setCachedStateField={setCachedStateField}
@@ -375,6 +406,8 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone },
 						browserToolEnabled={browserToolEnabled}
 						browserViewportSize={browserViewportSize}
 						screenshotQuality={screenshotQuality}
+						remoteBrowserHost={remoteBrowserHost}
+						remoteBrowserEnabled={remoteBrowserEnabled}
 						setCachedStateField={setCachedStateField}
 					/>
 				</div>
@@ -395,14 +428,21 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone },
 					/>
 				</div>
 
+				<div ref={contextRef}>
+					<ContextManagementSettings
+						terminalOutputLineLimit={terminalOutputLineLimit}
+						maxOpenTabsContext={maxOpenTabsContext}
+						maxWorkspaceFiles={maxWorkspaceFiles ?? 200}
+						showRooIgnoredFiles={showRooIgnoredFiles}
+						setCachedStateField={setCachedStateField}
+					/>
+				</div>
+
 				<div ref={advancedRef}>
 					<AdvancedSettings
 						rateLimitSeconds={rateLimitSeconds}
-						terminalOutputLimit={terminalOutputLimit}
-						maxOpenTabsContext={maxOpenTabsContext}
 						diffEnabled={diffEnabled}
 						fuzzyMatchThreshold={fuzzyMatchThreshold}
-						showRooIgnoredFiles={showRooIgnoredFiles}
 						setCachedStateField={setCachedStateField}
 						setExperimentEnabled={setExperimentEnabled}
 						experiments={experiments}
@@ -421,25 +461,33 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone },
 					version={version}
 					telemetrySetting={telemetrySetting}
 					setTelemetrySetting={setTelemetrySetting}
+					language={language || "en"}
+					setCachedStateField={setCachedStateField}
 				/>
-			</div>
+			</TabContent>
 
 			<AlertDialog open={isDiscardDialogShow} onOpenChange={setDiscardDialogShow}>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Unsaved changes</AlertDialogTitle>
+						<AlertDialogTitle>
+							<AlertTriangle className="w-5 h-5 text-yellow-500" />
+							{t("settings:unsavedChangesDialog.title")}
+						</AlertDialogTitle>
 						<AlertDialogDescription>
-							<span className={`codicon codicon-warning align-middle mr-1`} />
-							Do you want to discard changes and continue?
+							{t("settings:unsavedChangesDialog.description")}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
-						<AlertDialogAction onClick={() => onConfirmDialogResult(true)}>Yes</AlertDialogAction>
-						<AlertDialogCancel onClick={() => onConfirmDialogResult(false)}>No</AlertDialogCancel>
+						<AlertDialogCancel onClick={() => onConfirmDialogResult(false)}>
+							{t("settings:unsavedChangesDialog.cancelButton")}
+						</AlertDialogCancel>
+						<AlertDialogAction onClick={() => onConfirmDialogResult(true)}>
+							{t("settings:unsavedChangesDialog.discardButton")}
+						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
 			</AlertDialog>
-		</div>
+		</Tab>
 	)
 })
 

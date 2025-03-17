@@ -48,6 +48,7 @@ export interface WebviewMessage {
 		| "alwaysAllowBrowser"
 		| "alwaysAllowMcp"
 		| "alwaysAllowModeSwitch"
+		| "alwaysAllowSubtasks"
 		| "playSound"
 		| "soundEnabled"
 		| "soundVolume"
@@ -56,21 +57,22 @@ export interface WebviewMessage {
 		| "checkpointStorage"
 		| "browserViewportSize"
 		| "screenshotQuality"
+		| "remoteBrowserHost"
 		| "openMcpSettings"
 		| "restartMcpServer"
 		| "toggleToolAlwaysAllow"
 		| "toggleMcpServer"
 		| "updateMcpTimeout"
 		| "fuzzyMatchThreshold"
-		| "preferredLanguage"
 		| "writeDelayMs"
 		| "enhancePrompt"
 		| "enhancedPrompt"
 		| "draggedImages"
 		| "deleteMessage"
-		| "terminalOutputLimit"
+		| "terminalOutputLineLimit"
 		| "mcpEnabled"
 		| "enableMcpServerCreation"
+		| "enableCustomModeCreation"
 		| "searchCommits"
 		| "alwaysApproveResubmit"
 		| "requestDelaySeconds"
@@ -95,12 +97,18 @@ export interface WebviewMessage {
 		| "checkpointRestore"
 		| "deleteMcpServer"
 		| "maxOpenTabsContext"
+		| "maxWorkspaceFiles"
 		| "humanRelayResponse"
 		| "humanRelayCancel"
 		| "browserToolEnabled"
 		| "requestTabbyModels"
 		| "telemetrySetting"
 		| "showRooIgnoredFiles"
+		| "testBrowserConnection"
+		| "discoverBrowser"
+		| "browserConnectionResult"
+		| "remoteBrowserEnabled"
+		| "language"
 	text?: string
 	disabled?: boolean
 	askResponse?: ClineAskResponse
@@ -125,18 +133,6 @@ export interface WebviewMessage {
 	payload?: WebViewMessagePayload
 	source?: "global" | "project"
 	requestId?: string
-}
-
-// Human relay related message types
-export interface HumanRelayResponseMessage extends WebviewMessage {
-	type: "humanRelayResponse"
-	requestId: string
-	text: string
-}
-
-export interface HumanRelayCancelMessage extends WebviewMessage {
-	type: "humanRelayCancel"
-	requestId: string
 }
 
 export const checkoutDiffPayloadSchema = z.object({

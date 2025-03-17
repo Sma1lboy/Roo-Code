@@ -258,6 +258,7 @@ export const ChatRowContent = ({
 							<span style={{ fontWeight: "bold" }}>Roo wants to edit this file:</span>
 						</div>
 						<CodeAccordian
+							progressStatus={message.progressStatus}
 							isLoading={message.partial}
 							diff={tool.diff!}
 							path={tool.path!}
@@ -451,8 +452,20 @@ export const ChatRowContent = ({
 						<div style={headerStyle}>
 							{toolIcon("new-file")}
 							<span style={{ fontWeight: "bold" }}>
-								Roo wants to create a new task in <code>{tool.mode}</code> mode:
+								Roo wants to create a new subtask in <code>{tool.mode}</code> mode:
 							</span>
+						</div>
+						<div style={{ paddingLeft: "26px", marginTop: "4px" }}>
+							<code>{tool.content}</code>
+						</div>
+					</>
+				)
+			case "finishTask":
+				return (
+					<>
+						<div style={headerStyle}>
+							{toolIcon("checklist")}
+							<span style={{ fontWeight: "bold" }}>Roo wants to finish this subtask</span>
 						</div>
 						<div style={{ paddingLeft: "26px", marginTop: "4px" }}>
 							<code>{tool.content}</code>
@@ -694,12 +707,14 @@ export const ChatRowContent = ({
 									</span>
 								</div>
 								<div>
-									Roo won't be able to view the command's output. Please update VSCode (
-									<code>CMD/CTRL + Shift + P</code> → "Update") and make sure you're using a supported
-									shell: zsh, bash, fish, or PowerShell (<code>CMD/CTRL + Shift + P</code> →
-									"Terminal: Select Default Profile").{" "}
+									<strong>{message.text}</strong>
+									<br />
+									<br />
+									Please update VSCode (<code>CMD/CTRL + Shift + P</code> → "Update") and make sure
+									you're using a supported shell: zsh, bash, fish, or PowerShell (
+									<code>CMD/CTRL + Shift + P</code> → "Terminal: Select Default Profile").{" "}
 									<a
-										href="https://github.com/cline/cline/wiki/Troubleshooting-%E2%80%90-Shell-Integration-Unavailable"
+										href="http://docs.roocode.com/troubleshooting/shell-integration/"
 										style={{ color: "inherit", textDecoration: "underline" }}>
 										Still having trouble?
 									</a>
