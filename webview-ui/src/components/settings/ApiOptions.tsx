@@ -4,7 +4,7 @@ import { Trans } from "react-i18next"
 import { getRequestyAuthUrl, getOpenRouterAuthUrl, getGlamaAuthUrl } from "../../oauth/urls"
 import { useDebounce, useEvent } from "react-use"
 import { LanguageModelChatSelector } from "vscode"
-import { Checkbox, Dropdown, DropdownOption } from "vscrui"
+import { Checkbox } from "vscrui"
 import { VSCodeLink, VSCodeRadio, VSCodeRadioGroup, VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
 import { ExternalLinkIcon } from "@radix-ui/react-icons"
 
@@ -1174,104 +1174,53 @@ const ApiOptions = ({
 				</>
 			)}
 			{selectedProvider === "tabby" && (
-				<div>
-					<label htmlFor="vscode-lm-model">
-						<span className="font-medium">Language Model</span>
-					</label>
-					<div
-						style={{
-							display: "flex",
-							justifyContent: "space-between",
-							alignItems: "center",
-							marginBottom: "10px",
-						}}>
+				<>
+					<div>
+						<label className="block font-medium mb-1">
+							{t("settings:providers.tabbyModel") || "Language Model"}
+						</label>
 						{tabbyModels.length > 0 ? (
-							<Dropdown
-								id="tabbyml-model"
-								value={apiConfiguration?.tabbyModelId}
-								onChange={handleInputChange("tabbyModelId", (e) => {
-									const valueStr = (e as DropdownOption)?.value
-									return valueStr ? valueStr : ""
-								})}
-								style={{ width: "100%" }}
-								options={[
-									{ value: "", label: "Select a model..." },
-									...tabbyModels.map((model) => ({
-										value: model,
-										label: model,
-									})),
-								]}
-							/>
+							<Select
+								value={apiConfiguration?.tabbyModelId || ""}
+								onValueChange={handleInputChange("tabbyModelId", (value) => value)}>
+								<SelectTrigger className="w-full">
+									<SelectValue placeholder={t("settings:common.select") || "Select a model..."} />
+								</SelectTrigger>
+								<SelectContent>
+									{tabbyModels.map((model) => (
+										<SelectItem key={model} value={model}>
+											{model}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
 						) : (
-							<div
-								style={{
-									padding: "10px",
-									background: "var(--vscode-editorWarning-background)",
-									color: "var(--vscode-editorWarning-foreground)",
-									border: "1px solid var(--vscode-editorWarning-border)",
-									borderRadius: "4px",
-									marginBottom: "10px",
-									display: "flex",
-									alignItems: "center",
-									fontSize: "13px",
-								}}>
-								<i
-									className="codicon codicon-warning"
-									style={{ fontSize: "14px", marginRight: "8px" }}
-								/>
+							<div className="p-2.5 bg-vscode-editorWarning-background text-vscode-editorWarning-foreground border border-vscode-editorWarning-border rounded flex items-center text-sm mb-2.5">
+								<i className="codicon codicon-warning text-sm mr-2" />
 								Tabby models waiting to load...
 							</div>
 						)}
 					</div>
-					<button
-						type="button"
-						className="button-secondary"
-						style={{
-							padding: "4px 8px",
-							borderRadius: "4px",
-							fontSize: "12px",
-							display: "flex",
-							alignItems: "center",
-							justifyContent: "center",
-						}}
+					<Button
+						variant="secondary"
+						className="flex items-center justify-center text-xs"
 						onClick={() => {
 							vscode.postMessage({ type: "requestTabbyModels" })
 						}}>
-						<i
-							className="codicon codicon-refresh"
-							style={{
-								marginRight: "4px",
-								transition: "transform 0.3s ease",
-								fontSize: "11px",
-							}}
-						/>
+						<i className="codicon codicon-refresh text-xs mr-1 transition-transform duration-300 ease-in-out" />
 						Reconnect
-					</button>
-					<p
-						style={{
-							fontSize: "12px",
-							marginTop: "5px",
-							color: "var(--vscode-descriptionForeground)",
-						}}>
-						<span
-							style={{
-								display: "block",
-								color: "var(--vscode-errorForeground)",
-								marginBottom: "8px",
-								background: "var(--vscode-errorBackground)",
-								padding: "8px",
-								borderRadius: "4px",
-								border: "1px solid var(--vscode-errorBorder)",
-							}}>
+					</Button>
+					<div className="text-sm text-vscode-descriptionForeground mt-1.5">
+						<div className="block text-vscode-errorForeground mb-2 bg-vscode-errorBackground p-2 rounded border border-vscode-errorBorder">
 							Note: This feature is still experimental. Results may vary depending on the model being
 							used.
-						</span>
+						</div>
 						Connect to Tabby server through the Tabby VS Code extension.{" "}
-						<VSCodeLink href="https://tabby.tabbyml.com" style={{ display: "inline", fontSize: "inherit" }}>
+						<VSCodeLink href="https://tabby.tabbyml.com" className="inline">
 							Learn more about Tabby
 						</VSCodeLink>
-					</p>
-				</div>
+					</div>
+				</>
 			)}
 			{selectedProvider === "lmstudio" && (
 				<>
