@@ -36,12 +36,12 @@
 		"title": "Instruccions personalitzades específiques del mode (opcional)",
 		"resetToDefault": "Restablir a valors predeterminats",
 		"description": "Afegiu directrius de comportament específiques per al mode {{modeName}}.",
-		"loadFromFile": "Les instruccions personalitzades específiques per al mode {{modeName}} també es poden carregar des de .clinerules-{{modeSlug}} al vostre espai de treball."
+		"loadFromFile": "Les instruccions personalitzades específiques per al mode {{mode}} també es poden carregar des de <span>.clinerules-{{slug}}</span> al vostre espai de treball."
 	},
 	"globalCustomInstructions": {
 		"title": "Instruccions personalitzades per a tots els modes",
 		"description": "Aquestes instruccions s'apliquen a tots els modes. Proporcionen un conjunt bàsic de comportaments que es poden millorar amb instruccions específiques de cada mode a continuació.\nSi voleu que Roo pensi i parli en un idioma diferent al de la visualització del vostre editor ({{language}}), podeu especificar-ho aquí.",
-		"loadFromFile": "Les instruccions també es poden carregar des de .clinerules al vostre espai de treball."
+		"loadFromFile": "Les instruccions també es poden carregar des de <span>.clinerules</span> al vostre espai de treball."
 	},
 	"systemPrompt": {
 		"preview": "Previsualització del prompt del sistema",
@@ -91,16 +91,16 @@
 			"TERMINAL_EXPLAIN": {
 				"label": "Explicar comanda del terminal",
 				"description": "Obtingueu explicacions detallades de les comandes del terminal i les seves sortides. Disponible al menú contextual del terminal (clic dret al contingut seleccionat del terminal)."
+			},
+			"NEW_TASK": {
+				"label": "Iniciar nova tasca",
+				"description": "Inicieu una nova tasca amb l'entrada proporcionada. Disponible a la paleta de comandes."
 			}
 		}
 	},
-	"customModeCreation": {
-		"enableTitle": "Habilitar la creació de modes personalitzats a través de prompts",
-		"description": "Quan està habilitat, Roo us permet crear modes personalitzats utilitzant prompts com 'Crea'm un mode personalitzat que...'. Desactivar-ho redueix el vostre prompt del sistema en aproximadament 700 tokens quan aquesta funcionalitat no és necessària. Quan està desactivat, encara podeu crear modes personalitzats manualment utilitzant el botó + de dalt o editant el JSON de configuració relacionat."
-	},
 	"advancedSystemPrompt": {
 		"title": "Avançat: Sobreescriure prompt del sistema",
-		"description": "Podeu reemplaçar completament el prompt del sistema per a aquest mode (a part de la definició de rol i instruccions personalitzades) creant un fitxer a .roo/system-prompt-{{modeSlug}} al vostre espai de treball. Aquesta és una funcionalitat molt avançada que eludeix les salvaguardes integrades i les comprovacions de consistència (especialment al voltant de l'ús d'eines), així que aneu amb compte!"
+		"description": "Podeu reemplaçar completament el prompt del sistema per a aquest mode (a part de la definició de rol i instruccions personalitzades) creant un fitxer a <span>.roo/system-prompt-{{slug}}</span> al vostre espai de treball. Aquesta és una funcionalitat molt avançada que eludeix les salvaguardes integrades i les comprovacions de consistència (especialment al voltant de l'ús d'eines), així que aneu amb compte!"
 	},
 	"createModeDialog": {
 		"title": "Crear nou mode",

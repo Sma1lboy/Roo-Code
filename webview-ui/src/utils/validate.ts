@@ -1,4 +1,5 @@
 import { ApiConfiguration, ModelInfo } from "../../../src/shared/api"
+import i18next from "i18next"
 
 export function validateApiConfiguration(apiConfiguration?: ApiConfiguration): string | undefined {
 	if (!apiConfiguration) {
@@ -8,72 +9,72 @@ export function validateApiConfiguration(apiConfiguration?: ApiConfiguration): s
 	switch (apiConfiguration.apiProvider) {
 		case "openrouter":
 			if (!apiConfiguration.openRouterApiKey) {
-				return "You must provide a valid API key."
+				return i18next.t("settings:validation.apiKey")
 			}
 			break
 		case "glama":
 			if (!apiConfiguration.glamaApiKey) {
-				return "You must provide a valid API key."
+				return i18next.t("settings:validation.apiKey")
 			}
 			break
 		case "unbound":
 			if (!apiConfiguration.unboundApiKey) {
-				return "You must provide a valid API key."
+				return i18next.t("settings:validation.apiKey")
 			}
 			break
 		case "requesty":
 			if (!apiConfiguration.requestyApiKey) {
-				return "You must provide a valid API key."
+				return i18next.t("settings:validation.apiKey")
 			}
 			break
 		case "anthropic":
 			if (!apiConfiguration.apiKey) {
-				return "You must provide a valid API key."
+				return i18next.t("settings:validation.apiKey")
 			}
 			break
 		case "bedrock":
 			if (!apiConfiguration.awsRegion) {
-				return "You must choose a region to use with AWS Bedrock."
+				return i18next.t("settings:validation.awsRegion")
 			}
 			break
 		case "vertex":
 			if (!apiConfiguration.vertexProjectId || !apiConfiguration.vertexRegion) {
-				return "You must provide a valid Google Cloud Project ID and Region."
+				return i18next.t("settings:validation.googleCloud")
 			}
 			break
 		case "gemini":
 			if (!apiConfiguration.geminiApiKey) {
-				return "You must provide a valid API key."
+				return i18next.t("settings:validation.apiKey")
 			}
 			break
 		case "openai-native":
 			if (!apiConfiguration.openAiNativeApiKey) {
-				return "You must provide a valid API key."
+				return i18next.t("settings:validation.apiKey")
 			}
 			break
 		case "mistral":
 			if (!apiConfiguration.mistralApiKey) {
-				return "You must provide a valid API key."
+				return i18next.t("settings:validation.apiKey")
 			}
 			break
 		case "openai":
 			if (!apiConfiguration.openAiBaseUrl || !apiConfiguration.openAiApiKey || !apiConfiguration.openAiModelId) {
-				return "You must provide a valid base URL, API key, and model ID."
+				return i18next.t("settings:validation.openAi")
 			}
 			break
 		case "ollama":
 			if (!apiConfiguration.ollamaModelId) {
-				return "You must provide a valid model ID."
+				return i18next.t("settings:validation.modelId")
 			}
 			break
 		case "lmstudio":
 			if (!apiConfiguration.lmStudioModelId) {
-				return "You must provide a valid model ID."
+				return i18next.t("settings:validation.modelId")
 			}
 			break
 		case "vscode-lm":
 			if (!apiConfiguration.vsCodeLmModelSelector) {
-				return "You must provide a valid model selector."
+				return i18next.t("settings:validation.modelSelector")
 			}
 			break
 		case "tabby":
@@ -100,7 +101,7 @@ export function validateBedrockArn(arn: string, region?: string) {
 		return {
 			isValid: false,
 			arnRegion: undefined,
-			errorMessage: "Invalid ARN format. Please check the format requirements.",
+			errorMessage: i18next.t("settings:validation.arn.invalidFormat"),
 		}
 	}
 
@@ -112,7 +113,7 @@ export function validateBedrockArn(arn: string, region?: string) {
 		return {
 			isValid: true,
 			arnRegion,
-			errorMessage: `Warning: The region in your ARN (${arnRegion}) does not match your selected region (${region}). This may cause access issues. The provider will use the region from the ARN.`,
+			errorMessage: i18next.t("settings:validation.arn.regionMismatch", { arnRegion, region }),
 		}
 	}
 
@@ -140,7 +141,7 @@ export function validateModelId(
 			const modelId = apiConfiguration.openRouterModelId
 
 			if (!modelId) {
-				return "You must provide a model ID."
+				return i18next.t("settings:validation.modelId")
 			}
 
 			if (
@@ -148,7 +149,7 @@ export function validateModelId(
 				Object.keys(openRouterModels).length > 1 &&
 				!Object.keys(openRouterModels).includes(modelId)
 			) {
-				return `The model ID (${modelId}) you provided is not available. Please choose a different model.`
+				return i18next.t("settings:validation.modelAvailability", { modelId })
 			}
 
 			break
@@ -157,7 +158,7 @@ export function validateModelId(
 			const glamaModelId = apiConfiguration.glamaModelId
 
 			if (!glamaModelId) {
-				return "You must provide a model ID."
+				return i18next.t("settings:validation.modelId")
 			}
 
 			if (
@@ -165,7 +166,7 @@ export function validateModelId(
 				Object.keys(glamaModels).length > 1 &&
 				!Object.keys(glamaModels).includes(glamaModelId)
 			) {
-				return `The model ID (${glamaModelId}) you provided is not available. Please choose a different model.`
+				return i18next.t("settings:validation.modelAvailability", { modelId: glamaModelId })
 			}
 
 			break
@@ -174,7 +175,7 @@ export function validateModelId(
 			const unboundModelId = apiConfiguration.unboundModelId
 
 			if (!unboundModelId) {
-				return "You must provide a model ID."
+				return i18next.t("settings:validation.modelId")
 			}
 
 			if (
@@ -182,7 +183,7 @@ export function validateModelId(
 				Object.keys(unboundModels).length > 1 &&
 				!Object.keys(unboundModels).includes(unboundModelId)
 			) {
-				return `The model ID (${unboundModelId}) you provided is not available. Please choose a different model.`
+				return i18next.t("settings:validation.modelAvailability", { modelId: unboundModelId })
 			}
 
 			break
@@ -191,7 +192,7 @@ export function validateModelId(
 			const requestyModelId = apiConfiguration.requestyModelId
 
 			if (!requestyModelId) {
-				return "You must provide a model ID."
+				return i18next.t("settings:validation.modelId")
 			}
 
 			if (
@@ -199,7 +200,7 @@ export function validateModelId(
 				Object.keys(requestyModels).length > 1 &&
 				!Object.keys(requestyModels).includes(requestyModelId)
 			) {
-				return `The model ID (${requestyModelId}) you provided is not available. Please choose a different model.`
+				return i18next.t("settings:validation.modelAvailability", { modelId: requestyModelId })
 			}
 
 			break

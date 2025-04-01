@@ -23,7 +23,9 @@ export interface ExtensionStateContextType extends ExtensionState {
 	setApiConfiguration: (config: ApiConfiguration) => void
 	setCustomInstructions: (value?: string) => void
 	setAlwaysAllowReadOnly: (value: boolean) => void
+	setAlwaysAllowReadOnlyOutsideWorkspace: (value: boolean) => void
 	setAlwaysAllowWrite: (value: boolean) => void
+	setAlwaysAllowWriteOutsideWorkspace: (value: boolean) => void
 	setAlwaysAllowExecute: (value: boolean) => void
 	setAlwaysAllowBrowser: (value: boolean) => void
 	setAlwaysAllowMcp: (value: boolean) => void
@@ -35,6 +37,10 @@ export interface ExtensionStateContextType extends ExtensionState {
 	setAllowedCommands: (value: string[]) => void
 	setSoundEnabled: (value: boolean) => void
 	setSoundVolume: (value: number) => void
+	terminalShellIntegrationTimeout?: number
+	setTerminalShellIntegrationTimeout: (value: number) => void
+	setTtsEnabled: (value: boolean) => void
+	setTtsSpeed: (value: number) => void
 	setDiffEnabled: (value: boolean) => void
 	setEnableCheckpoints: (value: boolean) => void
 	setBrowserViewportSize: (value: string) => void
@@ -48,8 +54,6 @@ export interface ExtensionStateContextType extends ExtensionState {
 	setMcpEnabled: (value: boolean) => void
 	enableMcpServerCreation: boolean
 	setEnableMcpServerCreation: (value: boolean) => void
-	enableCustomModeCreation?: boolean
-	setEnableCustomModeCreation: (value: boolean) => void
 	alwaysApproveResubmit?: boolean
 	setAlwaysApproveResubmit: (value: boolean) => void
 	requestDelaySeconds: number
@@ -74,14 +78,18 @@ export interface ExtensionStateContextType extends ExtensionState {
 	setTelemetrySetting: (value: TelemetrySetting) => void
 	remoteBrowserEnabled?: boolean
 	setRemoteBrowserEnabled: (value: boolean) => void
+	maxReadFileLine: number
+	setMaxReadFileLine: (value: number) => void
 	machineId?: string
+	pinnedApiConfigs?: Record<string, boolean>
+	setPinnedApiConfigs: (value: Record<string, boolean>) => void
+	togglePinnedApiConfig: (configName: string) => void
 }
 
 export const ExtensionStateContext = createContext<ExtensionStateContextType | undefined>(undefined)
 
 export const mergeExtensionState = (prevState: ExtensionState, newState: ExtensionState) => {
 	const {
-		apiConfiguration: prevApiConfiguration,
 		customModePrompts: prevCustomModePrompts,
 		customSupportPrompts: prevCustomSupportPrompts,
 		experiments: prevExperiments,
@@ -89,19 +97,21 @@ export const mergeExtensionState = (prevState: ExtensionState, newState: Extensi
 	} = prevState
 
 	const {
-		apiConfiguration: newApiConfiguration,
+		apiConfiguration,
 		customModePrompts: newCustomModePrompts,
 		customSupportPrompts: newCustomSupportPrompts,
 		experiments: newExperiments,
 		...newRest
 	} = newState
 
-	const apiConfiguration = { ...prevApiConfiguration, ...newApiConfiguration }
 	const customModePrompts = { ...prevCustomModePrompts, ...newCustomModePrompts }
 	const customSupportPrompts = { ...prevCustomSupportPrompts, ...newCustomSupportPrompts }
 	const experiments = { ...prevExperiments, ...newExperiments }
 	const rest = { ...prevRest, ...newRest }
 
+	// Note that we completely replace the previous apiConfiguration object with
+	// a new one since the state that is broadcast is the entire apiConfiguration
+	// and therefore merging is not necessary.
 	return { ...rest, apiConfiguration, customModePrompts, customSupportPrompts, experiments }
 }
 
@@ -114,16 +124,18 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 		allowedCommands: [],
 		soundEnabled: false,
 		soundVolume: 0.5,
+		ttsEnabled: false,
+		ttsSpeed: 1.0,
 		diffEnabled: false,
 		enableCheckpoints: true,
 		checkpointStorage: "task",
 		fuzzyMatchThreshold: 1.0,
 		language: "en", // Default language code
-		enableCustomModeCreation: true,
 		writeDelayMs: 1000,
 		browserViewportSize: "900x600",
 		screenshotQuality: 75,
 		terminalOutputLineLimit: 500,
+		terminalShellIntegrationTimeout: 4000,
 		mcpEnabled: true,
 		enableMcpServerCreation: true,
 		alwaysApproveResubmit: false,
@@ -143,7 +155,10 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 		cwd: "",
 		browserToolEnabled: true,
 		telemetrySetting: "unset",
-		showRooIgnoredFiles: true, // Default to showing .rooignore'd files with lock symbol (current behavior)
+		showRooIgnoredFiles: true, // Default to showing .rooignore'd files with lock symbol (current behavior).
+		renderContext: "sidebar",
+		maxReadFileLine: 500, // Default max read file line limit
+		pinnedApiConfigs: {}, // Empty object for pinned API configs
 	})
 
 	const [didHydrateState, setDidHydrateState] = useState(false)
@@ -231,6 +246,7 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 		filePaths,
 		openedTabs,
 		soundVolume: state.soundVolume,
+		ttsSpeed: state.ttsSpeed,
 		fuzzyMatchThreshold: state.fuzzyMatchThreshold,
 		writeDelayMs: state.writeDelayMs,
 		screenshotQuality: state.screenshotQuality,
@@ -246,7 +262,11 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 			})),
 		setCustomInstructions: (value) => setState((prevState) => ({ ...prevState, customInstructions: value })),
 		setAlwaysAllowReadOnly: (value) => setState((prevState) => ({ ...prevState, alwaysAllowReadOnly: value })),
+		setAlwaysAllowReadOnlyOutsideWorkspace: (value) =>
+			setState((prevState) => ({ ...prevState, alwaysAllowReadOnlyOutsideWorkspace: value })),
 		setAlwaysAllowWrite: (value) => setState((prevState) => ({ ...prevState, alwaysAllowWrite: value })),
+		setAlwaysAllowWriteOutsideWorkspace: (value) =>
+			setState((prevState) => ({ ...prevState, alwaysAllowWriteOutsideWorkspace: value })),
 		setAlwaysAllowExecute: (value) => setState((prevState) => ({ ...prevState, alwaysAllowExecute: value })),
 		setAlwaysAllowBrowser: (value) => setState((prevState) => ({ ...prevState, alwaysAllowBrowser: value })),
 		setAlwaysAllowMcp: (value) => setState((prevState) => ({ ...prevState, alwaysAllowMcp: value })),
@@ -256,6 +276,8 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 		setAllowedCommands: (value) => setState((prevState) => ({ ...prevState, allowedCommands: value })),
 		setSoundEnabled: (value) => setState((prevState) => ({ ...prevState, soundEnabled: value })),
 		setSoundVolume: (value) => setState((prevState) => ({ ...prevState, soundVolume: value })),
+		setTtsEnabled: (value) => setState((prevState) => ({ ...prevState, ttsEnabled: value })),
+		setTtsSpeed: (value) => setState((prevState) => ({ ...prevState, ttsSpeed: value })),
 		setDiffEnabled: (value) => setState((prevState) => ({ ...prevState, diffEnabled: value })),
 		setEnableCheckpoints: (value) => setState((prevState) => ({ ...prevState, enableCheckpoints: value })),
 		setBrowserViewportSize: (value: string) =>
@@ -265,6 +287,8 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 		setScreenshotQuality: (value) => setState((prevState) => ({ ...prevState, screenshotQuality: value })),
 		setTerminalOutputLineLimit: (value) =>
 			setState((prevState) => ({ ...prevState, terminalOutputLineLimit: value })),
+		setTerminalShellIntegrationTimeout: (value) =>
+			setState((prevState) => ({ ...prevState, terminalShellIntegrationTimeout: value })),
 		setMcpEnabled: (value) => setState((prevState) => ({ ...prevState, mcpEnabled: value })),
 		setEnableMcpServerCreation: (value) =>
 			setState((prevState) => ({ ...prevState, enableMcpServerCreation: value })),
@@ -278,8 +302,6 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 		setCustomSupportPrompts: (value) => setState((prevState) => ({ ...prevState, customSupportPrompts: value })),
 		setEnhancementApiConfigId: (value) =>
 			setState((prevState) => ({ ...prevState, enhancementApiConfigId: value })),
-		setEnableCustomModeCreation: (value) =>
-			setState((prevState) => ({ ...prevState, enableCustomModeCreation: value })),
 		setAutoApprovalEnabled: (value) => setState((prevState) => ({ ...prevState, autoApprovalEnabled: value })),
 		setCustomModes: (value) => setState((prevState) => ({ ...prevState, customModes: value })),
 		setMaxOpenTabsContext: (value) => setState((prevState) => ({ ...prevState, maxOpenTabsContext: value })),
@@ -288,6 +310,23 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 		setTelemetrySetting: (value) => setState((prevState) => ({ ...prevState, telemetrySetting: value })),
 		setShowRooIgnoredFiles: (value) => setState((prevState) => ({ ...prevState, showRooIgnoredFiles: value })),
 		setRemoteBrowserEnabled: (value) => setState((prevState) => ({ ...prevState, remoteBrowserEnabled: value })),
+		setMaxReadFileLine: (value) => setState((prevState) => ({ ...prevState, maxReadFileLine: value })),
+		setPinnedApiConfigs: (value) => setState((prevState) => ({ ...prevState, pinnedApiConfigs: value })),
+		togglePinnedApiConfig: (configId) =>
+			setState((prevState) => {
+				const currentPinned = prevState.pinnedApiConfigs || {}
+				const newPinned = {
+					...currentPinned,
+					[configId]: !currentPinned[configId],
+				}
+
+				// If the config is now unpinned, remove it from the object
+				if (!newPinned[configId]) {
+					delete newPinned[configId]
+				}
+
+				return { ...prevState, pinnedApiConfigs: newPinned }
+			}),
 	}
 
 	return <ExtensionStateContext.Provider value={contextValue}>{children}</ExtensionStateContext.Provider>

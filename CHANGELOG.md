@@ -1,5 +1,145 @@
 # Roo Code Changelog
 
+## [3.11.3] - 2025-03-31
+
+- Revert mention changes in case they're causing performance issues/crashes
+
+## [3.11.2] - 2025-03-31
+
+- Fix bug in loading Requesty key balance
+- Fix bug with Bedrock inference profiles
+- Update the webview when changing settings via the API
+- Refactor webview messages code (thanks @diarmidmackenzie!)
+
+## [3.11.1] - 2025-03-30
+
+- Relax provider profiles schema and add telemetry
+
+## [3.11.0] - 2025-03-30
+
+- Replace single-block-diff with multi-block-diff fast editing strategy
+- Support project-level MCP config in .roo/mcp.json (thanks @aheizi!)
+- Show OpenRouter and Requesty key balance on the settings screen
+- Support import/export of settings
+- Add pinning and sorting for API configuration dropdown (thanks @jwcraig!)
+- Add Gemini 2.5 Pro to GCP Vertex AI provider (thanks @nbihan-mediware!)
+- Smarter retry logic for Gemini
+- Fix Gemini command escaping
+- Support @-mentions of files with spaces in the name (thanks @samhvw8!)
+- Improvements to partial file reads (thanks @KJ7LNW!)
+- Fix list_code_definition_names to support files (thanks @KJ7LNW!)
+- Refactor tool-calling logic to make the code a lot easier to work with (thanks @diarmidmackenzie, @bramburn, @KJ7LNW, and everyone else who helped!)
+- Prioritize “Add to Context” in the code actions and include line numbers (thanks @samhvw8!)
+- Add an activation command that other extensions can use to interface with Roo Code (thanks @gtaylor!)
+- Preserve language characters in file @-mentions (thanks @aheizi!)
+- Browser tool improvements (thanks @afshawnlotfi!)
+- Display info about partial reads in the chat row
+- Link to the settings page from the auto-approve toolbar
+- Link to provider docs from the API options
+- Fix switching profiles to ensure only the selected profile is switched (thanks @feifei325!)
+- Allow custom o3-mini-<reasoning> model from OpenAI-compatible providers (thanks @snoyiatk!)
+- Edit suggested answers before accepting them (thanks @samhvw8!)
+
+## [3.10.5] - 2025-03-25
+
+- Updated value of max tokens for gemini-2.5-pro-03-25 to 65,536 (thanks @linegel!)
+- Fix logic around when we fire task completion events
+
+## [3.10.4] - 2025-03-25
+
+- Dynamically fetch instructions for creating/editing custom modes and MCP servers (thanks @diarmidmackenzie!)
+- Added Gemini 2.5 Pro model to Google Gemini provider (thanks @samsilveira!)
+- Add settings to control whether to auto-approve reads and writes outside of the workspace
+- Update UX for chat text area (thanks @chadgauth!)
+- Support a custom storage path for tasks (thanks @Chenjiayuan195!)
+- Add a New Task command in the Command Palette (thanks @qdaxb!)
+- Add R1 support checkbox to Open AI compatible provider to support QWQ (thanks @teddyOOXX!)
+- Support test declarations in TypeScript tree-sitter queries (thanks @KJ7LNW!)
+- Add Bedrock support for application-inference-profile (thanks @maekawataiki!)
+- Rename and migrate global MCP and modes files (thanks @StevenTCramer!)
+- Add watchPaths option to McpHub for file change detection (thanks @01Rian!)
+- Read image responses from MCP calls (thanks @nevermorec!)
+- Add taskCreated event to API and subscribe to Cline events earlier (thanks @wkordalski!)
+- Fixes to numeric formatting suffix internationalization (thanks @feifei325!)
+- Fix open tab support in the context mention suggestions (thanks @aheizi!)
+- Better display of OpenRouter “overloaded” error messages
+- Fix browser tool visibility in system prompt preview (thanks @cannuri!)
+- Fix the supportsPromptCache value for OpenAI models (thanks @PeterDaveHello!)
+- Fix readme links to docs (thanks @kvokka!)
+- Run ‘npm audit fix’ on all of our libraries
+
+## [3.10.3] - 2025-03-23
+
+- Update the welcome page to provide 1-click OAuth flows with LLM routers (thanks @dtrugman!)
+- Switch to a more direct method of tracking OpenRouter tokens/spend
+- Make partial file reads backwards-compatible with custom system prompts and give users more control over the chunk size
+- Fix issues where questions and suggestions weren’t showing up for non-streaming models and were hard to read in some themes
+- A variety of fixes and improvements to experimental multi-block diff (thanks @KJ7LNW!)
+- Fix opacity of drop-down menus in settings (thanks @KJ7LNW!)
+- Fix bugs with reading and mentioning binary files like PDFs
+- Fix the pricing information for OpenRouter free models (thanks @Jdo300!)
+- Fix an issue with our unit tests on Windows (thanks @diarmidmackenzie!)
+- Fix a maxTokens issue for the Outbound provider (thanks @pugazhendhi-m!)
+- Fix a line number issue with partial file reads (thanks @samhvw8!)
+
+## [3.10.2] - 2025-03-21
+
+- Fixes to context mentions on Windows
+- Fixes to German translations (thanks @cannuri!)
+- Fixes to telemetry banner internationalization
+- Sonnet 3.7 non-thinking now correctly uses 8192 max output tokens
+
+## [3.10.1] - 2025-03-20
+
+- Make the suggested responses optional to not break overriden system prompts
+
+## [3.10.0] - 2025-03-20
+
+- Suggested responses to questions (thanks samhvw8!)
+- Support for reading large files in chunks (thanks samhvw8!)
+- More consistent @-mention lookups of files and folders
+- Consolidate code actions into a submenu (thanks samhvw8!)
+- Fix MCP error logging (thanks aheizi!)
+- Improvements to search_files tool formatting and logic (thanks KJ7LNW!)
+- Fix changelog formatting in GitHub Releases (thanks pdecat!)
+- Add fake provider for integration tests (thanks franekp!)
+- Reflect Cross-region inference option in ap-xx region (thanks Yoshino-Yukitaro!)
+- Fix bug that was causing task history to be lost when using WSL
+
+## [3.9.2] - 2025-03-19
+
+- Update GitHub Actions workflow to automatically create GitHub Releases (thanks @pdecat!)
+- Correctly persist the text-to-speech speed state (thanks @heyseth!)
+- Fixes to French translations (thanks @arthurauffray!)
+- Optimize build time for local development (thanks @KJ7LNW!)
+- VSCode theme fixes for select, dropdown and command components
+- Bring back the ability to manually enter a model name in the model picker
+- Fix internationalization of the announcement title and the browser
+
+## [3.9.1] - 2025-03-18
+
+- Pass current language to system prompt correctly so Roo thinks and speaks in the selected language
+
+## [3.9.0] - 2025-03-18
+
+- Internationalize Roo Code into Catalan, German, Spanish, French, Hindi, Italian, Japanese, Korean, Polish, Portuguese, Turkish, Vietnamese, Simplified Chinese, and Traditional Chinese (thanks @feifei325!)
+- Bring back support for MCP over SSE (thanks @aheizi!)
+- Add a text-to-speech option to have Roo talk to you as it works (thanks @heyseth!)
+- Choose a specific provider when using OpenRouter (thanks PhunkyBob!)
+- Support batch deletion of task history (thanks @aheizi!)
+- Internationalize Human Relay, adjust the layout, and make it work on the welcome screen (thanks @NyxJae!)
+- Fix shell integration race condition (thanks @KJ7LNW!)
+- Fix display updating for Bedrock custom ARNs that are prompt routers (thanks @Smartsheet-JB-Brown!)
+- Fix to exclude search highlighting when copying items from task history (thanks @im47cn!)
+- Fix context mentions to work with multiple-workspace projects (thanks @teddyOOXX!)
+- Fix to task history saving when running multiple Roos (thanks @samhvw8!)
+- Improve task deletion when underlying files are missing (thanks @GitlyHallows!)
+- Improve support for NixOS & direnv (thanks @wkordalski!)
+- Fix wheel scrolling when Roo is opened in editor tabs (thanks @GitlyHallows!)
+- Don’t automatically mention the file when using the "Add to context" code action (thanks @qdaxb!)
+- Expose task stack in `RooCodeAPI` (thanks @franekp!)
+- Give the models visibility into the current task's API cost
+
 ## [3.8.6] - 2025-03-13
 
 - Revert SSE MCP support while we debug some config validation issues

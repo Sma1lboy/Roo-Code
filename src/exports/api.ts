@@ -3,13 +3,14 @@ import * as vscode from "vscode"
 
 import { ClineProvider } from "../core/webview/ClineProvider"
 
-import { RooCodeAPI, RooCodeEvents, ConfigurationValues } from "./roo-code"
+import { RooCodeAPI, RooCodeEvents, TokenUsage, RooCodeSettings } from "./roo-code"
 import { MessageHistory } from "./message-history"
 
 export class API extends EventEmitter<RooCodeEvents> implements RooCodeAPI {
 	private readonly outputChannel: vscode.OutputChannel
 	private readonly provider: ClineProvider
 	private readonly history: MessageHistory
+	private readonly tokenUsage: Record<string, TokenUsage>
 
 	constructor(outputChannel: vscode.OutputChannel, provider: ClineProvider) {
 		super()
@@ -17,18 +18,30 @@ export class API extends EventEmitter<RooCodeEvents> implements RooCodeAPI {
 		this.outputChannel = outputChannel
 		this.provider = provider
 		this.history = new MessageHistory()
+		this.tokenUsage = {}
+
+		this.provider.on("clineCreated", (cline) => {
+			cline.on("message", (message) => this.emit("message", { taskId: cline.taskId, ...message }))
+			cline.on("taskStarted", () => this.emit("taskStarted", cline.taskId))
+			cline.on("taskPaused", () => this.emit("taskPaused", cline.taskId))
+			cline.on("taskUnpaused", () => this.emit("taskUnpaused", cline.taskId))
+			cline.on("taskAskResponded", () => this.emit("taskAskResponded", cline.taskId))
+			cline.on("taskAborted", () => this.emit("taskAborted", cline.taskId))
+			cline.on("taskSpawned", (childTaskId) => this.emit("taskSpawned", cline.taskId, childTaskId))
+			cline.on("taskCompleted", (_, usage) => this.emit("taskCompleted", cline.taskId, usage))
+			cline.on("taskTokenUsageUpdated", (_, usage) => this.emit("taskTokenUsageUpdated", cline.taskId, usage))
+			this.emit("taskCreated", cline.taskId)
+		})
 
 		this.on("message", ({ taskId, action, message }) => {
-			// if (message.type === "say") {
-			// 	console.log("message", { taskId, action, message })
-			// }
-
 			if (action === "created") {
 				this.history.add(taskId, message)
 			} else if (action === "updated") {
 				this.history.update(taskId, message)
 			}
 		})
+
+		this.on("taskTokenUsageUpdated", (taskId, usage) => (this.tokenUsage[taskId] = usage))
 	}
 
 	public async startNewTask(text?: string, images?: string[]) {
@@ -38,14 +51,11 @@ export class API extends EventEmitter<RooCodeEvents> implements RooCodeAPI {
 		await this.provider.postMessageToWebview({ type: "invoke", invoke: "newChat", text, images })
 
 		const cline = await this.provider.initClineWithTask(text, images)
-		cline.on("message", (message) => this.emit("message", { taskId: cline.taskId, ...message }))
-		cline.on("taskStarted", () => this.emit("taskStarted", cline.taskId))
-		cline.on("taskPaused", () => this.emit("taskPaused", cline.taskId))
-		cline.on("taskUnpaused", () => this.emit("taskUnpaused", cline.taskId))
-		cline.on("taskAborted", () => this.emit("taskAborted", cline.taskId))
-		cline.on("taskSpawned", (taskId) => this.emit("taskSpawned", cline.taskId, taskId))
-
 		return cline.taskId
+	}
+
+	public getCurrentTaskStack() {
+		return this.provider.getCurrentTaskStack()
 	}
 
 	public async clearCurrentTask(lastMessage?: string) {
@@ -68,8 +78,13 @@ export class API extends EventEmitter<RooCodeEvents> implements RooCodeAPI {
 		await this.provider.postMessageToWebview({ type: "invoke", invoke: "secondaryButtonClick" })
 	}
 
-	public async setConfiguration(values: Partial<ConfigurationValues>) {
+	public getConfiguration() {
+		return this.provider.getValues()
+	}
+
+	public async setConfiguration(values: RooCodeSettings) {
 		await this.provider.setValues(values)
+		await this.provider.postStateToWebview()
 	}
 
 	public isReady() {
@@ -78,5 +93,13 @@ export class API extends EventEmitter<RooCodeEvents> implements RooCodeAPI {
 
 	public getMessages(taskId: string) {
 		return this.history.getMessages(taskId)
+	}
+
+	public getTokenUsage(taskId: string) {
+		return this.tokenUsage[taskId]
+	}
+
+	public log(message: string) {
+		this.outputChannel.appendLine(message)
 	}
 }
