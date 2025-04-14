@@ -32,6 +32,7 @@ interface ChatTextAreaProps {
 	inputValue: string
 	setInputValue: (value: string) => void
 	textAreaDisabled: boolean
+	selectApiConfigDisabled: boolean
 	placeholderText: string
 	selectedImages: string[]
 	setSelectedImages: React.Dispatch<React.SetStateAction<string[]>>
@@ -50,6 +51,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			inputValue,
 			setInputValue,
 			textAreaDisabled,
+			selectApiConfigDisabled,
 			placeholderText,
 			selectedImages,
 			setSelectedImages,
@@ -814,7 +816,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 									"leading-vscode-editor-line-height",
 									"py-2",
 									"px-[9px]",
-									"z-[1000]",
+									"z-10",
 								)}
 								style={{
 									color: "transparent",
@@ -975,7 +977,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 						<div className={cn("flex-1", "min-w-0", "overflow-hidden")}>
 							<SelectDropdown
 								value={currentConfigId}
-								disabled={textAreaDisabled}
+								disabled={selectApiConfigDisabled}
 								title={t("chat:selectApiConfig")}
 								placeholder={displayName} // Always show the current name
 								options={[
@@ -1026,7 +1028,11 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 								]}
 								onChange={(value) => {
 									if (value === "settingsButtonClicked") {
-										vscode.postMessage({ type: "loadApiConfiguration", text: value })
+										vscode.postMessage({
+											type: "loadApiConfiguration",
+											text: value,
+											values: { section: "providers" },
+										})
 									} else {
 										vscode.postMessage({ type: "loadApiConfigurationById", text: value })
 									}

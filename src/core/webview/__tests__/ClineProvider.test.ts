@@ -414,7 +414,6 @@ describe("ClineProvider", () => {
 			mcpEnabled: true,
 			enableMcpServerCreation: false,
 			requestDelaySeconds: 5,
-			rateLimitSeconds: 0,
 			mode: defaultModeSlug,
 			customModes: [],
 			experiments: experimentDefault,
@@ -1190,7 +1189,7 @@ describe("ClineProvider", () => {
 				}),
 			}))
 
-			// Mock getState to return experimentalDiffStrategy, diffEnabled and fuzzyMatchThreshold
+			// Mock getState to return diffEnabled and fuzzyMatchThreshold
 			jest.spyOn(provider, "getState").mockResolvedValue({
 				apiConfiguration: {
 					apiProvider: "openrouter",
@@ -1202,7 +1201,6 @@ describe("ClineProvider", () => {
 				enableMcpServerCreation: true,
 				mcpEnabled: false,
 				browserViewportSize: "900x600",
-				experimentalDiffStrategy: true,
 				diffEnabled: true,
 				fuzzyMatchThreshold: 0.8,
 				experiments: experimentDefault,
@@ -1259,7 +1257,6 @@ describe("ClineProvider", () => {
 				mode: "code",
 				mcpEnabled: false,
 				browserViewportSize: "900x600",
-				experimentalDiffStrategy: true,
 				diffEnabled: false,
 				fuzzyMatchThreshold: 0.8,
 				experiments: experimentDefault,

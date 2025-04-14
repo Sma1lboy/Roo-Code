@@ -193,7 +193,6 @@ describe("mergeExtensionState", () => {
 			checkpointStorage: "task",
 			writeDelayMs: 1000,
 			requestDelaySeconds: 5,
-			rateLimitSeconds: 0,
 			mode: "default",
 			experiments: {} as Record<ExperimentId, boolean>,
 			customModes: [],
@@ -210,7 +209,6 @@ describe("mergeExtensionState", () => {
 			...baseState,
 			apiConfiguration: { modelMaxTokens: 1234, modelMaxThinkingTokens: 123 },
 			experiments: {
-				experimentalDiffStrategy: true,
 				search_and_replace: true,
 				insert_content: true,
 			} as Record<ExperimentId, boolean>,
@@ -232,7 +230,6 @@ describe("mergeExtensionState", () => {
 		})
 
 		expect(result.experiments).toEqual({
-			experimentalDiffStrategy: true,
 			search_and_replace: true,
 			insert_content: true,
 			powerSteering: true,
